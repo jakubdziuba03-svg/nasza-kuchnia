@@ -1480,8 +1480,45 @@ function drawEditor(){
 }
 
 /* --- nowy produkt --- */
+const AI_ETYKIETA = `Na zdjęciu jest opakowanie produktu spożywczego z tabelą wartości odżywczych. Odczytaj ją.
+
+Zasady:
+- Podaj wartości na 100 g lub 100 ml. Jeśli tabela podaje je tylko na porcję, przelicz na 100 g i napisz o tym w polu "uwaga".
+- "Węglowodany" bierz z wiersza węglowodanów ogółem, nie z "w tym cukry".
+- Jeśli na opakowaniu widać masę netto (np. 150 g, 400 ml), podaj ją jako "opakowanie".
+- Nazwę podaj krótko i po polsku, razem z marką, np. "Skyr Piątnica naturalny".
+- Czego nie widać wyraźnie — wpisz 0 i napisz o tym w "uwaga". Nie zgaduj.
+
+Odpowiedz WYŁĄCZNIE obiektem JSON, bez komentarza i bez znaczników kodu:
+{"nazwa":"...","jednostka":"g","kcal":64,"bialko":12,"tluszcz":0,"wegle":4.1,"opakowanie":150,"uwaga":""}
+jednostka: "g" dla stałych, "ml" dla płynów.`;
+
+async function etykietaDoAI(file){
+  const dataUrl = await zmniejsz(file, 1400).catch(()=>null);   // etykiety mają drobny druk
+  if(!dataUrl){ toast('Nie udało się otworzyć zdjęcia'); return; }
+  const dane = await zapytajAI([
+    {type:'image', source:{type:'base64', media_type:'image/jpeg', data: dataUrl.split(',')[1]}},
+    {type:'text', text: AI_ETYKIETA}
+  ]);
+  if(!dane) return;
+  const wstaw = (id, v) => { const e = $(id); if(e && v !== undefined && v !== null && v !== '') e.value = v; };
+  wstaw('#pN', dane.nazwa); wstaw('#pK', dane.kcal); wstaw('#pB', dane.bialko);
+  wstaw('#pT', dane.tluszcz); wstaw('#pW', dane.wegle); wstaw('#pP', dane.opakowanie);
+  const u = $('#pU'); if(u && (dane.jednostka==='g' || dane.jednostka==='ml')) u.value = dane.jednostka;
+  /* kontrola: czy odczytane makro zgadza się z odczytanymi kaloriami */
+  const z = (+dane.bialko||0)*4 + (+dane.tluszcz||0)*9 + (+dane.wegle||0)*4;
+  const k = +dane.kcal||0;
+  let msg = 'Odczytane — sprawdź i zapisz';
+  if(k && z && Math.abs(z-k)/k > 0.2) msg = 'Uwaga: z makro wychodzi ~'+r0(z)+' kcal, a odczytałem '+k+' — sprawdź etykietę';
+  else if(dane.uwaga) msg = String(dane.uwaga).slice(0,110);
+  toast(msg);
+}
+
 function openNewProduct(){
   const d = [`<div class="sheet-h"><h3>Nowy produkt</h3><button class="icobtn" data-close="1">✕</button></div><div class="card">`];
+  d.push('<button class="btn wide" data-pfoto="1" style="margin-bottom:12px">📷 Odczytaj z etykiety</button>');
+  d.push('<input type="file" id="pPlik" accept="image/*" capture="environment" style="display:none">');
+  if(!aiKlucz()) d.push('<div class="tiny" style="margin:-6px 0 10px">Odczyt etykiety wymaga klucza z ⚙️ Ustawień. Bez niego wpisz wartości ręcznie.</div>');
   d.push('<label class="f"><span>Nazwa</span><input id="pN" placeholder="np. Serek homogenizowany"></label>');
   d.push('<label class="f"><span>Alejka w sklepie</span><select id="pA">'+AISLES.map(([k,n,e])=>`<option value="${k}">${e} ${n}</option>`).join('')+'</select></label>');
   d.push('<div class="grid2"><label class="f"><span>Jednostka</span><select id="pU"><option value="g">gramy</option><option value="ml">mililitry</option><option value="szt">sztuki</option></select></label>');
@@ -1496,6 +1533,8 @@ function openNewProduct(){
   d.push('<label class="f"><span>Waga 1 szt. (g)</span><input id="pG" type="number" inputmode="decimal" placeholder="tylko dla sztuk"></label></div>');
   d.push('</div><button class="btn wide" data-psave="1">Dodaj produkt</button>');
   openSheet(d.join(''));
+  const pl = $('#pPlik');
+  if(pl) pl.onchange = e => { const f = e.target.files[0]; if(f) etykietaDoAI(f); };
 }
 
 /* ==========================================================================
@@ -2456,6 +2495,7 @@ go('plan'); toast('Wybierz miejsce w planie i dotknij „wybierz danie”'); ret
     const nieznane = SKL.filter(x=>x.brak).length;
     if(nieznane) toast(nieznane+' rzeczy nie znam — dodaj je jako produkt albo oszacuj przez ✨');
     return; }
+  if(D.pfoto){ if(!aiKlucz()){ toast('Najpierw wpisz klucz w ⚙️ Ustawieniach'); return; } $('#pPlik').click(); return; }
   if(D.sklfoto){ if(!aiKlucz()){ toast('Najpierw wpisz klucz w ⚙️ Ustawieniach'); return; } $('#sklPlik').click(); return; }
   if(D.sklai){ const t=$('#sklT').value.trim();
     if(!t){ toast('Opisz, co zjedzone'); return; }
