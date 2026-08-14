@@ -267,7 +267,9 @@ const P = {
   feta:      {n:'Feta',                 a:'nabial', u:'g',  kcal:264, b:14, t:21, w:4, pack:200, o:1},
   jajko:     {n:'Jajka',                a:'nabial', u:'szt',kcal:70, b:6.5, t:4.8, w:0.4,  pack:10, gram:55, o:1},
 
-  kurczak:   {n:'Pierś z kurczaka',     a:'mieso',  u:'g',  kcal:165, b:31, t:3.6, w:0, pack:null},
+  kurczak:   {n:'Pierś z kurczaka SUROWA', a:'mieso', u:'g', kcal:120, b:22.5, t:2.6, w:0, pack:null},
+  kurczakG:  {n:'Pierś z kurczaka ugotowana/pieczona', a:'mieso', u:'g', kcal:165, b:31, t:3.6, w:0, pack:null},
+  kurczakS:  {n:'Pierś z kurczaka smażona', a:'mieso', u:'g', kcal:180, b:31, t:6, w:0, pack:null},
   indyk:     {n:'Mielone z indyka',     a:'mieso',  u:'g',  kcal:150, b:20, t:8, w:0, pack:500, o:1},
   losos:     {n:'Łosoś (filet)',        a:'mieso',  u:'g',  kcal:200, b:20, t:13, w:0, pack:null},
   tunczyk:   {n:'Tuńczyk w wodzie',     a:'sypkie', u:'g',  kcal:100, b:23, t:1, w:0, pack:120, o:1},
@@ -300,7 +302,15 @@ const P = {
   jagody:    {n:'Mrożone owoce leśne',  a:'mrozone',u:'g',  kcal:45, b:0.8, t:0.4, w:9,  pack:400, o:1},
   brokul:    {n:'Brokuł mrożony',       a:'mrozone',u:'g',  kcal:34, b:2.8, t:0.4, w:4,  pack:450, o:1},
 
-  odzywka:   {n:'Odżywka białkowa',     a:'przyprawy',u:'g',kcal:380, b:75, t:5, w:8, pack:700},
+  odzywka:   {n:'Odżywka białkowa (KFD WPC 82)', a:'przyprawy', u:'g', kcal:375, b:76, t:5.5, w:5.4, pack:700},
+  skyrWan:   {n:'Skyr Piątnica waniliowy', a:'nabial', u:'g', kcal:82,  b:11,   t:0,   w:11,   pack:150, o:1},
+  skyrNat:   {n:'Skyr Piątnica naturalny', a:'nabial', u:'g', kcal:64,  b:12,   t:0,   w:4.1,  pack:150, o:1},
+  platkiLion:{n:'Płatki proteinowe Lion',  a:'sypkie', u:'g', kcal:405, b:15,   t:6.9, w:67.6, pack:400},
+  serProt:   {n:'Ser proteinowy biały (Lidl)', a:'nabial', u:'g', kcal:198, b:31, t:8.2, w:0, pack:200, o:1},
+  twarogChudy:{n:'Twaróg chudy',           a:'nabial', u:'g', kcal:98,  b:18,   t:0.8, w:3.5,  pack:250, o:1},
+  owsiany:   {n:'Napój owsiany naturalny', a:'napoje', u:'ml', kcal:42, b:1,    t:1.2, w:7,    pack:1000, o:1},
+  makaronPsz:{n:'Makaron pszenny (surowy)',a:'sypkie', u:'g', kcal:353, b:12.5, t:1.5, w:71,   pack:500},
+  sosWarzMies:{n:'Sos warzywno-mięsny (nasz)', a:'mieso', u:'g', kcal:71, b:8.3, t:1.7, w:5.2, pack:null, o:1},
   przyprawy: {n:'Przyprawy (sól, pieprz, zioła)',a:'przyprawy',u:'g',kcal:0, b:0, t:0, w:0,pack:null}
 };
 
@@ -383,9 +393,9 @@ const SLOTS = [['sniadanie','Śniadanie'],['obiad','Obiad'],['kolacja','Kolacja'
 
 /* --- 5. STAN APLIKACJI --- */
 const DEF_SET = {
-  himName:'On', herName:'Ona', himKcal:2400, herKcal:1600, himProt:170, herProt:120,
-  himSex:'M', herSex:'K', himAge:30, herAge:28, himH:180, herH:165,
-  himPal:1.375, herPal:1.375, himDef:500, herDef:400, trainBoost:10, lastAsk:'', mailTo:'jakubdziuba03@gmail.com',
+  himName:'Jakub', herName:'Gosia', himKcal:2700, herKcal:1600, himProt:190, herProt:120,
+  himSex:'M', herSex:'K', himAge:23, herAge:28, himH:190, herH:165,
+  himPal:1.55, herPal:1.375, himDef:721, herDef:400, trainBoost:14.8, trainBoost2:20.4, himMin:2600, herMin:0, lastAsk:'', mailTo:'jakubdziuba03@gmail.com',
   days:3, containerMl:750, pairCode:''
 };
 let S = Object.assign({}, DEF_SET, DB.get('set', {}));
@@ -466,8 +476,8 @@ function wagaAkt(who){
 }
 function profil(who){
   const P_ = who==='him'
-    ? {sex:S.himSex, age:S.himAge, h:S.himH, pal:S.himPal, def:S.himDef, min:1500}
-    : {sex:S.herSex, age:S.herAge, h:S.herH, pal:S.herPal, def:S.herDef, min:1200};
+    ? {sex:S.himSex, age:S.himAge, h:S.himH, pal:S.himPal, def:S.himDef, min:Math.max(1500, S.himMin||0)}
+    : {sex:S.herSex, age:S.herAge, h:S.herH, pal:S.herPal, def:S.herDef, min:Math.max(1200, S.herMin||0)};
   P_.kg = wagaAkt(who);
   return P_;
 }
@@ -482,10 +492,86 @@ function policzCele(who){
           bialko: r0(p.kg * 1.9)};
 }
 /* cel na konkretny dzień — trening dokłada 10% */
-const trenuje = (day, who) => !!(TRAIN[day] && TRAIN[day][who==='him'?'h':'r']);
+/* 0 = brak, 1 = jeden trening, 2 = dwa tego samego dnia */
+function poziomTreningu(day, who){
+  const v = TRAIN[day] && TRAIN[day][who==='him'?'h':'r'];
+  return v === true ? 1 : (+v || 0);
+}
+const trenuje = (day, who) => poziomTreningu(day, who) > 0;
 function celDnia(who, day){
   const baza = who==='him' ? S.himKcal : S.herKcal;
-  return r0(baza * (trenuje(day, who) ? 1 + (S.trainBoost||0)/100 : 1));
+  const lvl = poziomTreningu(day, who);
+  const proc = lvl === 2 ? (S.trainBoost2||20) : lvl === 1 ? (S.trainBoost||15) : 0;
+  return r0(baza * (1 + proc/100));
+}
+
+/* ---------- rozpoznawanie składników z tekstu ----------
+   Zamienia "200 g kurczaka, 2 jajka, łyżka oliwy" na policzone pozycje.
+   Działa bez internetu, na Waszej bazie produktów. */
+const MIARY = {
+  'g':1,'gram':1,'gramy':1,'gramów':1,'dag':10,'deka':10,'kg':1000,
+  'ml':1,'l':1000,'litr':1000,
+  'szt':null,'sztuki':null,'sztuk':null,'sztuka':null,
+  'łyżka':15,'łyżki':15,'łyżek':15,'lyzka':15,
+  'łyżeczka':5,'łyżeczki':5,'lyzeczka':5,
+  'szklanka':250,'szklanki':250,'garść':30,'garsc':30,'plaster':20,'plasterek':20,
+  'opakowanie':null,'opak':null,'paczka':null,'paczki':null,'kostka':null
+};
+const bezOgonkow = t => String(t).toLowerCase()
+  .replace(/ą/g,'a').replace(/ć/g,'c').replace(/ę/g,'e').replace(/ł/g,'l').replace(/ń/g,'n')
+  .replace(/ó/g,'o').replace(/ś/g,'s').replace(/ż/g,'z').replace(/ź/g,'z');
+
+function znajdzProdukt(fraza){
+  const f = bezOgonkow(fraza).replace(/[^a-z0-9 ]/g,' ').trim();
+  if(f.length < 3) return null;
+  let best = null, bestScore = 0;
+  Object.keys(P).forEach(pid=>{
+    const n = bezOgonkow(P[pid].n);
+    let score = 0;
+    // wspólny początek wyrazów — "kurczaka" trafia w "Pierś z kurczaka"
+    n.split(/[ ,()]+/).forEach(slowo=>{
+      if(slowo.length < 3) return;
+      f.split(' ').forEach(w=>{
+        if(w.length < 3) return;
+        const wsp = Math.min(slowo.length, w.length);
+        let i = 0; while(i < wsp && slowo[i] === w[i]) i++;
+        if(i >= 4 || (i >= 3 && i === slowo.length)) score = Math.max(score, i / Math.max(4, slowo.length));
+      });
+    });
+    if(score > bestScore){ bestScore = score; best = pid; }
+  });
+  return bestScore >= 0.55 ? best : null;
+}
+
+function parsujJedzenie(txt){
+  const wynik = [];
+  String(txt||'').split(/[,;\n]+|\si\s/).map(x=>x.trim()).filter(Boolean).forEach(kawalek=>{
+    const m = kawalek.match(/^\s*([0-9]+(?:[.,][0-9]+)?)?\s*([a-ząćęłńóśżź]+)?\s*(.*)$/i);
+    if(!m) return;
+    let ile = m[1] ? parseFloat(m[1].replace(',','.')) : null;
+    let miara = m[2] ? bezOgonkow(m[2]) : '';
+    let nazwa = m[3] || '';
+    /* "2 jajka" — brak miary, liczba dotyczy sztuk */
+    if(!(miara in MIARY)){ nazwa = (m[2] ? m[2]+' ' : '') + nazwa; miara = ''; }
+    /* „30 g białka” w Waszym języku znaczy 30 g PROSZKU odżywki, a nie
+       30 g białka jako makroskładnika — to kolokwializm, nie pomyłka */
+    const nOk = bezOgonkow(nazwa || kawalek);
+    let pid;
+    if(/\bbialk/.test(nOk) && !/jaj|serek|twarog|ser\b/.test(nOk)) pid = 'odzywka';
+    else pid = znajdzProdukt(nazwa || kawalek);
+    if(!pid){ wynik.push({nazwa: kawalek, brak:true}); return; }
+    const p = P[pid];
+    let q;
+    /* „opakowanie serka” = cała paczka z etykiety */
+    if(['opakowanie','opak','paczka','paczki','kostka'].indexOf(miara) >= 0 && p.pack) q = (ile || 1) * p.pack;
+    else if(p.u === 'szt') q = ile || 1;
+    else if(miara && MIARY[miara]) q = (ile || 1) * MIARY[miara];
+    else if(ile && ile > 20) q = ile;                 // "200 kurczaka" = gramy
+    else q = (ile || 1) * (p.gram || 100);            // "1 banan" ≈ jedna sztuka
+    const t = recipeTotals({ing:[[pid, q]]});
+    wynik.push({pid, q, nazwa: p.n, kcal:t.kcal, b:t.b, tl:t.t, we:t.w});
+  });
+  return wynik;
 }
 
 /* ---------- co faktycznie zjedzone ---------- */
@@ -584,9 +670,12 @@ function renderPlan(){
   d.push('</div>');
 
   /* trening tego dnia */
-  d.push('<div class="card tight"><div class="between"><div><b style="font-size:14px">🏋️ Trening tego dnia</b><div class="tiny">Dzień treningowy dokłada '+(S.trainBoost||0)+'% kalorii</div></div><div class="row" style="gap:7px">');
-  d.push(`<button class="trchip ${trenuje(dayKey(dayIdx),'him')?'on him':''}" data-tr="${dayKey(dayIdx)}~h">${esc(S.himName)}</button>`);
-  d.push(`<button class="trchip ${trenuje(dayKey(dayIdx),'her')?'on her':''}" data-tr="${dayKey(dayIdx)}~r">${esc(S.herName)}</button>`);
+  d.push('<div class="card tight"><div class="between"><div><b style="font-size:14px">🏋️ Trening tego dnia</b><div class="tiny">Dotknij raz — jeden trening (+'+(S.trainBoost||0)+'%). Dotknij drugi raz — dwa treningi (+'+(S.trainBoost2||0)+'%).</div></div><div class="row" style="gap:7px">');
+  [['him','h',S.himName],['her','r',S.herName]].forEach(([w,kk,nm])=>{
+    const lvl = poziomTreningu(dayKey(dayIdx), w);
+    const et = lvl===2 ? ' ×2' : lvl===1 ? ' ✓' : '';
+    d.push(`<button class="trchip ${lvl?('on '+w):''}" data-tr="${dayKey(dayIdx)}~${kk}">${esc(nm)}${et}</button>`);
+  });
   d.push('</div></div></div>');
 
   /* podsumowanie dnia */
@@ -1060,6 +1149,7 @@ function openPicker(key){
 
 /* --- edytor własnego przepisu --- */
 let edIng = [], edSteps = [''], edId = null, edMeta = null;
+let nowyZBraku = null;   // indeks pozycji z ekranu składników, dla której dodajemy produkt
 function openEditor(rec){
   if(rec){
     edId = rec.custom ? rec.id : null;         // moje przykładowe kopiujemy, nie nadpisujemy
@@ -1300,7 +1390,8 @@ function openJedzenie(){
     d.push('</div>');
   });
 
-  d.push('<h2>Dopisz coś spoza planu</h2><div class="card"><div class="grid2">');
+  d.push('<button class="btn wide" data-skl="1" style="margin-bottom:14px">➕ Dopisz jedzenie — składniki, opis albo zdjęcie</button>');
+  d.push('<h2>Albo wpisz ręcznie</h2><div class="card"><div class="grid2">');
   d.push('<label class="f" style="grid-column:1/-1"><span>Co to było</span><input id="exN" placeholder="np. batonik w pracy"></label>');
   d.push('<label class="f"><span>kcal</span><input id="exK" type="number" inputmode="numeric"></label>');
   d.push('<label class="f"><span>białko (g)</span><input id="exB" type="number" inputmode="numeric"></label>');
@@ -1320,6 +1411,170 @@ function openJedzenie(){
   });
   d.push('</div></div>');
   openSheet(d.join(''));
+}
+
+/* --- szybkie dopisanie jedzenia: składniki, opis albo zdjęcie --- */
+let SKL = [];              // rozpoznane pozycje czekające na zatwierdzenie
+let sklKto = 'him';
+let sklZdjecie = null;     // miniatura ostatniego zdjęcia (do podglądu)
+
+function openSkladniki(){
+  const dk = dayKey(dayIdx);
+  const suma = SKL.filter(x=>!x.brak).reduce((a,x)=>({k:a.k+(x.kcal||0), b:a.b+(x.b||0)}), {k:0,b:0});
+  const d = [`<div class="sheet-h"><h3>➕ Dopisz jedzenie</h3><button class="icobtn" data-close="1">✕</button></div>`];
+
+  d.push('<div class="card"><label class="f"><span>Wpisz, co zjedzone — składniki albo całe danie</span>');
+  d.push('<textarea id="sklT" rows="3" placeholder="200 g kurczaka, 2 jajka, łyżka oliwy"></textarea></label>');
+  d.push('<button class="btn wide" data-sklparse="1">Policz z naszej bazy</button>');
+  d.push('<div class="row" style="gap:8px;margin-top:8px">');
+  d.push('<button class="btn ghost sm" data-sklfoto="1" style="flex:1">📷 Ze zdjęcia</button>');
+  d.push('<button class="btn ghost sm" data-sklai="1" style="flex:1">✨ Oszacuj opis</button>');
+  d.push('</div>');
+  d.push('<input type="file" id="sklPlik" accept="image/*" capture="environment" style="display:none">');
+  if(!aiKlucz()) d.push('<div class="tiny" style="margin-top:8px">Zdjęcia i szacowanie opisem wymagają klucza — wpisz go w ⚙️ Ustawieniach.</div>');
+  d.push('</div>');
+
+  if(sklZdjecie) d.push(`<div class="card" style="text-align:center"><img src="${esc(sklZdjecie)}" style="max-width:100%;border-radius:12px"></div>`);
+  if(aiPytanie){
+    d.push(`<div class="note"><b>Zanim zapiszesz:</b> ${esc(aiPytanie)}<br><span class="tiny">Jak odpowiedź zmienia sprawę — dopisz ją do opisu i policz jeszcze raz. Gramatury możesz też poprawić niżej.</span></div>`);
+  }
+
+  if(SKL.length){
+    d.push('<h2>Rozpoznane — popraw, jeśli trzeba</h2><div class="card">');
+    SKL.forEach((x,i)=>{
+      if(x.brak){
+        d.push(`<div class="row" style="margin-bottom:8px"><span style="flex:1;font-size:14px;color:var(--warn)">⚠️ ${esc(x.nazwa)} — nie znam tego</span>
+          <button class="btn ghost sm" data-sklnowy="${i}">Dodaj produkt</button>
+          <button class="icobtn" data-sklrm="${i}" style="width:32px;height:32px;font-size:12px">✕</button></div>`);
+        return;
+      }
+      d.push(`<div class="row" style="margin-bottom:8px">
+        <span style="flex:1;font-size:14.5px">${esc(x.nazwa)}<div class="tiny">${x.kcal} kcal • ${x.b} g białka</div></span>
+        <input data-sklq="${i}" type="number" inputmode="decimal" value="${r1(x.q)}" style="width:84px">
+        <span class="tiny" style="width:24px">${x.pid && P[x.pid] ? P[x.pid].u : 'g'}</span>
+        <button class="icobtn" data-sklrm="${i}" style="width:32px;height:32px;font-size:12px">✕</button></div>`);
+    });
+    d.push('<button class="btn ghost sm" data-sklprzelicz="1" style="margin-top:4px">Przelicz po zmianie ilości</button>');
+    d.push(`<div class="macro" style="margin-top:10px"><span><b>${r0(suma.k)}</b> kcal</span><span><b>${r0(suma.b)}</b> g białka</span></div>`);
+    d.push('</div>');
+    d.push('<div class="row" style="gap:8px">');
+    d.push(`<button class="btn" data-skldodaj="him" style="flex:1">Dodaj — ${esc(S.himName)}</button>`);
+    d.push(`<button class="btn" data-skldodaj="her" style="flex:1">Dodaj — ${esc(S.herName)}</button>`);
+    d.push('</div>');
+    d.push('<p class="tiny" style="margin-top:9px">Trafi to do dziennika na ' + dayLabel(dayIdx).toLowerCase() + ' jako jedna pozycja z sumą kalorii i białka.</p>');
+  }
+  openSheet(d.join(''));
+  const inp = $('#sklPlik');
+  if(inp) inp.onchange = e => { const f = e.target.files[0]; if(f) zdjecieDoAI(f); };
+}
+
+/* klucz do modelu trzymany WYŁĄCZNIE w tym telefonie — nie idzie do chmury
+   i nie ma go w pliku aplikacji */
+const aiKlucz = () => DB.get('aikey', '');
+
+function przeliczSKL(){
+  document.querySelectorAll('[data-sklq]').forEach(i=>{
+    const x = SKL[+i.dataset.sklq]; if(!x || x.brak) return;
+    const nowa = +i.value || 0;
+    if(x.pid && P[x.pid]){
+      x.q = nowa;
+      const t = recipeTotals({ing:[[x.pid, x.q]]});
+      x.kcal = t.kcal; x.b = t.b; x.tl = t.t; x.we = t.w;
+    } else {
+      /* pozycja oszacowana przez model nie ma produktu w bazie — skalujemy
+         jej wartości proporcjonalnie do zmiany gramatury */
+      const stara = x.q || nowa || 1;
+      const f = stara ? nowa/stara : 1;
+      x.kcal = r0((x.kcal||0)*f); x.b = r0((x.b||0)*f);
+      x.tl = r0((x.tl||0)*f); x.we = r0((x.we||0)*f);
+      x.q = nowa;
+    }
+  });
+}
+
+/* zmniejszamy zdjęcie przed wysłaniem — telefon robi 4 MB, modelowi wystarczy ułamek */
+function zmniejsz(file, max=1024){
+  return new Promise((res, rej)=>{
+    const fr = new FileReader();
+    fr.onload = () => {
+      const img = new Image();
+      img.onload = () => {
+        const sk = Math.min(1, max/Math.max(img.width, img.height));
+        const c = document.createElement('canvas');
+        c.width = Math.round(img.width*sk); c.height = Math.round(img.height*sk);
+        c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+        res(c.toDataURL('image/jpeg', 0.8));
+      };
+      img.onerror = rej; img.src = fr.result;
+    };
+    fr.onerror = rej; fr.readAsDataURL(file);
+  });
+}
+
+const AI_ZADANIE = `Liczysz kalorie i makro dla pary na redukcji. Rozbij podane jedzenie na składniki z gramaturami i wartościami odżywczymi.
+
+ZASADY, KTÓRE NAJCZĘŚCIEJ DECYDUJĄ O BŁĘDZIE:
+- Mięso surowe kontra ugotowane to najczęstsza pomyłka. Surowa pierś z kurczaka to ok. 120 kcal i 22,5 g białka na 100 g, ugotowana lub pieczona ok. 165 kcal i 31 g białka, usmażona ok. 180 kcal i 6 g tłuszczu. Jeśli z opisu albo zdjęcia nie wynika jasno, w którym stanie jest mięso, ZAŁÓŻ wersję ugotowaną, ale koniecznie dopisz to w polu "pytanie".
+- Gdy ktoś mówi "X gramów białka", ma na myśli X gramów PROSZKU odżywki białkowej, a nie X gramów białka jako makroskładnika. Licz makra z wartości odżywki na 100 g.
+- Jeśli na etykiecie jest "opakowanie zawiera 1 porcję", licz całe opakowanie.
+- Jedzenie z restauracji i na mieście: nie celuj w środek widełek, tylko w ich górną część. Tam prawie zawsze jest więcej tłuszczu i oleju, niż widać.
+- Doliczaj tłuszcz ze smażenia, sosów i dressingów, o którym łatwo zapomnieć.
+- Nie zaniżaj. Lepiej lekko przeszacować niż dać komuś fałszywe poczucie deficytu.
+- Gramatury szacuj realistycznie dla porcji domowej, chyba że widać inaczej. Podawaj wartości dla całej widocznej porcji, nie na 100 g.
+
+Odpowiedz WYŁĄCZNIE obiektem JSON, bez komentarza i bez znaczników kodu:
+{"pozycje":[{"nazwa":"pierś z kurczaka, pieczona","gramy":180,"kcal":297,"bialko":56,"tluszcz":6,"wegle":0,"pewnosc":"wysoka"}],
+ "pytanie":"jedno pytanie, jeśli odpowiedź na nie realnie zmieni wynik — inaczej pusty tekst",
+ "uwaga":"jedno krótkie zdanie o tym, co było niepewne"}
+pewnosc: "wysoka" | "srednia" | "niska"`;
+
+async function zapytajAI(tresc){
+  const klucz = aiKlucz();
+  if(!klucz){ toast('Najpierw wpisz klucz w ⚙️ Ustawieniach'); return null; }
+  toast('Liczę…');
+  try{
+    const r = await fetch('https://api.anthropic.com/v1/messages', {
+      method:'POST',
+      headers:{'content-type':'application/json','x-api-key':klucz,
+               'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},
+      body: JSON.stringify({model:'claude-haiku-4-5', max_tokens:1200,
+        messages:[{role:'user', content: tresc}]})
+    });
+    if(r.status===401){ toast('Klucz odrzucony — sprawdź go w ⚙️'); return null; }
+    if(r.status===429){ toast('Za dużo zapytań naraz, spróbuj za chwilę'); return null; }
+    if(!r.ok){ const t = await r.text(); toast('Błąd '+r.status+(t.includes('credit')?' — brak środków na koncie':'')); return null; }
+    const d = await r.json();
+    const txt = (d.content||[]).filter(c=>c.type==='text').map(c=>c.text).join('');
+    const m = txt.match(/\{[\s\S]*\}/);
+    if(!m){ toast('Nie zrozumiałem odpowiedzi modelu'); return null; }
+    return JSON.parse(m[0]);
+  }catch(e){ toast('Nie udało się połączyć: '+e.message); return null; }
+}
+
+let aiPytanie = '';
+function wynikAIdoSKL(dane){
+  if(!dane || !Array.isArray(dane.pozycje)) return;
+  aiPytanie = (dane.pytanie || '').trim();
+  SKL = dane.pozycje.map(x=>({
+    pid: null, q: +x.gramy||0, nazwa: String(x.nazwa||'?') + (x.pewnosc==='niska' ? ' (niepewne)' : ''),
+    kcal: r0(+x.kcal||0), b: r0(+x.bialko||0), tl: r0(+x.tluszcz||0), we: r0(+x.wegle||0), zAI:true
+  }));
+  openSkladniki();
+  if(dane.uwaga) setTimeout(()=>toast(String(dane.uwaga).slice(0,120)), 800);
+}
+
+async function zdjecieDoAI(file){
+  const dataUrl = await zmniejsz(file).catch(()=>null);
+  if(!dataUrl){ toast('Nie udało się otworzyć zdjęcia'); return; }
+  sklZdjecie = dataUrl;
+  openSkladniki();
+  const b64 = dataUrl.split(',')[1];
+  const opis = ($('#sklT') && $('#sklT').value.trim()) || '';
+  const dane = await zapytajAI([
+    {type:'image', source:{type:'base64', media_type:'image/jpeg', data:b64}},
+    {type:'text', text: AI_ZADANIE + (opis ? '\n\nDodatkowy opis od użytkownika: ' + opis : '')}
+  ]);
+  wynikAIdoSKL(dane);
 }
 
 /* --- kalkulator celów --- */
@@ -1356,7 +1611,12 @@ function openCele(){
     d.push('</div>');
   });
 
-  d.push(`<div class="card tight"><label class="f" style="margin:0"><span>Dopałka w dni treningowe (%)</span><input id="cBoost" type="number" inputmode="numeric" value="${S.trainBoost}"></label></div>`);
+  d.push('<div class="card"><div class="grid2">');
+  d.push(`<label class="f"><span>Jeden trening (+%)</span><input id="cBoost" type="number" inputmode="numeric" value="${S.trainBoost}"></label>`);
+  d.push(`<label class="f"><span>Dwa treningi (+%)</span><input id="cBoost2" type="number" inputmode="numeric" value="${S.trainBoost2}"></label>`);
+  d.push(`<label class="f"><span>${esc(S.himName)} — własne minimum kcal</span><input id="cMinH" type="number" inputmode="numeric" value="${S.himMin||''}" placeholder="np. 2600"></label>`);
+  d.push(`<label class="f"><span>${esc(S.herName)} — własne minimum kcal</span><input id="cMinR" type="number" inputmode="numeric" value="${S.herMin||''}" placeholder="opcjonalnie"></label>`);
+  d.push('</div><div class="tiny">Własne minimum przydaje się, gdy wiesz z doświadczenia, że poniżej pewnego pułapu nie schodzisz — apka nie zejdzie niżej nawet przy większym deficycie.</div></div>');
   d.push('<button class="btn wide" data-celesave="1">Przelicz i zapisz cele</button>');
   d.push('<p class="tiny" style="margin-top:9px">Cele trafią do ustawień i od razu zaczną obowiązywać w planie. Możesz je potem ręcznie poprawić.</p>');
   openSheet(d.join(''));
@@ -1380,6 +1640,10 @@ function openSettings(){
   d.push(`<label class="f"><span>Pojemnik (ml)</span><input id="sC" type="number" inputmode="numeric" value="${S.containerMl}"></label>`);
   d.push(`<label class="f" style="grid-column:1/-1"><span>Adres do wysyłki uwag (💬)</span><input id="sM" type="email" value="${esc(S.mailTo)}"></label>`);
   d.push('</div></div>');
+  d.push('<h2>Szacowanie ze zdjęcia</h2><div class="card">');
+  d.push(`<label class="f"><span>Klucz z console.anthropic.com</span><input id="sAI" type="password" value="${esc(aiKlucz())}" placeholder="sk-ant-..."></label>`);
+  d.push('<div class="tiny">Zostaje wyłącznie w tym telefonie — nie trafia do chmury ani do pliku aplikacji, więc na drugim telefonie trzeba wpisać go osobno. Jedno zdjęcie to ułamek centa. Bez klucza działa wszystko poza ✨ i 📷.</div>');
+  d.push('</div>');
   d.push('<button class="btn ghost wide" data-cele="1" style="margin-bottom:8px">🎯 Policz cele z wagi, wzrostu i aktywności</button>');
   d.push('<button class="btn wide" data-ssave="1">Zapisz</button>');
   d.push('<button class="btn ghost wide" data-reset="1" style="margin-top:8px">Wyczyść cały plan</button>');
@@ -1892,7 +2156,10 @@ go('plan'); toast('Wybierz miejsce w planie i dotknij „wybierz danie”'); ret
       S[duze+'Pal'] = +g('Pal').value || 1.375;
       S[duze+'Def'] = Math.max(0, +g('Def').value || 0);
     });
-    S.trainBoost = Math.max(0, Math.min(50, +$('#cBoost').value || 0));
+    S.trainBoost  = Math.max(0, Math.min(50, +$('#cBoost').value || 0));
+    S.trainBoost2 = Math.max(0, Math.min(60, +$('#cBoost2').value || 0));
+    S.himMin = Math.max(0, +$('#cMinH').value || 0);
+    S.herMin = Math.max(0, +$('#cMinR').value || 0);
     let ostrzez = false;
     ['him','her'].forEach(w=>{
       const c = policzCele(w); if(!c || !c.kg) return;
@@ -1906,8 +2173,42 @@ go('plan'); toast('Wybierz miejsce w planie i dotknij „wybierz danie”'); ret
     return;
   }
   if(D.tr){ const [dd,kk] = D.tr.split('~'); TRAIN[dd] = TRAIN[dd] || {};
-    TRAIN[dd][kk] = !TRAIN[dd][kk]; znacz('train',dd); save(); renderPlan(); return; }
+    const teraz_ = TRAIN[dd][kk] === true ? 1 : (+TRAIN[dd][kk] || 0);
+    TRAIN[dd][kk] = (teraz_ + 1) % 3;              // brak → 1 trening → 2 treningi → brak
+    znacz('train',dd); save(); renderPlan(); return; }
   if(D.jem){ openJedzenie(); return; }
+  if(D.skl){ SKL=[]; sklZdjecie=null; aiPytanie=''; openSkladniki(); return; }
+  if(D.sklparse){ const t=$('#sklT').value.trim();
+    if(!t){ toast('Napisz, co zjedzone'); return; }
+    SKL = parsujJedzenie(t); openSkladniki();
+    const nieznane = SKL.filter(x=>x.brak).length;
+    if(nieznane) toast(nieznane+' rzeczy nie znam — dodaj je jako produkt albo oszacuj przez ✨');
+    return; }
+  if(D.sklfoto){ if(!aiKlucz()){ toast('Najpierw wpisz klucz w ⚙️ Ustawieniach'); return; } $('#sklPlik').click(); return; }
+  if(D.sklai){ const t=$('#sklT').value.trim();
+    if(!t){ toast('Opisz, co zjedzone'); return; }
+    zapytajAI([{type:'text', text: AI_ZADANIE + '\n\nJedzenie do policzenia: ' + t}]).then(wynikAIdoSKL);
+    return; }
+  if(D.sklq !== undefined && false){ return; }
+  if(D.sklprzelicz){ przeliczSKL(); openSkladniki(); return; }
+  if(D.sklrm){ przeliczSKL(); SKL.splice(+D.sklrm,1); openSkladniki(); return; }
+  if(D.sklnowy){ przeliczSKL(); nowyZBraku = +D.sklnowy; openNewProduct(); return; }
+  if(D.skldodaj){
+    przeliczSKL();
+    const poz = SKL.filter(x=>!x.brak);
+    if(!poz.length){ toast('Nie ma czego dodać'); return; }
+    const suma = poz.reduce((a,x)=>({k:a.k+(x.kcal||0), b:a.b+(x.b||0)}), {k:0,b:0});
+    const opis = poz.map(x=>x.nazwa+' '+r1(x.q)+(x.pid&&P[x.pid]?P[x.pid].u:'g')).join(', ');
+    const dk = dayKey(dayIdx);
+    dziennik(dk)[D.skldodaj].extra.push({
+      id:'e'+teraz()+Math.random().toString(36).slice(2,5),
+      n: opis.length>90 ? opis.slice(0,90)+'…' : opis,
+      k: r0(suma.k), b: r0(suma.b)
+    });
+    znacz('eaten', dk+'|'+D.skldodaj); save(); renderPlan();
+    SKL=[]; sklZdjecie=null; aiPytanie=''; closeSheet(); openJedzenie();
+    toast('Dopisane: '+r0(suma.k)+' kcal');
+    return; }
   if(D.ate){ const [sk,kk] = D.ate.split('~'); const dk = dayKey(dayIdx);
     const w = kk==='h' ? 'him' : 'her'; const dz = dziennik(dk);
     if(dz[w].slots[sk]){ dz[w].slots[sk] = false; }
@@ -2006,6 +2307,16 @@ function saveProduct(){
   if(MYP[id].kcal && zMakro && Math.abs(zMakro - MYP[id].kcal)/MYP[id].kcal > 0.25)
     setTimeout(()=>toast('Uwaga: z makro wychodzi ~'+r0(zMakro)+' kcal, a wpisałeś '+MYP[id].kcal), 900);
   P[id] = MYP[id]; DB.set('myprod', MYP); save();
+  if(nowyZBraku !== null){
+    /* produkt dodany z poziomu dopisywania jedzenia — wracamy tam i podstawiamy go */
+    const poz = SKL[nowyZBraku];
+    const ile = MYP[id].u==='szt' ? 1 : 100;
+    const t = recipeTotals({ing:[[id, ile]]});
+    if(poz) SKL[nowyZBraku] = {pid:id, q:ile, nazwa:MYP[id].n, kcal:t.kcal, b:t.b, tl:t.t, we:t.w};
+    nowyZBraku = null;
+    closeSheet(); openSkladniki(); toast('Produkt dodany — popraw ilość');
+    return;
+  }
   edIng.push([id, 100]);
   drawEditor(); toast('Produkt dodany ✓');
 }
@@ -2019,6 +2330,7 @@ function saveSettings(){
   S.days    = Math.min(7, Math.max(1, +$('#sD').value||3));
   S.containerMl = +$('#sC').value||750;
   S.mailTo = $('#sM').value.trim() || S.mailTo;
+  if($('#sAI')) DB.set('aikey', $('#sAI').value.trim());
   if(dayIdx >= S.days) dayIdx = 0;
   save(); closeSheet(); renderAll(); toast('Zapisane ✓');
 }
@@ -2097,6 +2409,17 @@ window.addEventListener('resize', ()=>{ if(tab==='weight'){ const r=weightRows()
 function renderAll(){ go(tab); }
 
 /* przykładowy plan przy pierwszym uruchomieniu */
+/* Jednorazowo: profil Jakuba z jego dokumentu (23 lata, 190 cm, cel białka 190 g,
+   minimum 2600 kcal, dni 2700 / 3100 / 3250). Dane Gosi zostają nietknięte. */
+if(!DB.get('profilJakuba', false)){
+  Object.assign(S, {himSex:'M', himAge:23, himH:190, himPal:1.55, himDef:721,
+                    himKcal:2700, himProt:190, himMin:2600,
+                    trainBoost:14.8, trainBoost2:20.4});
+  if(S.himName === 'On') S.himName = 'Jakub';
+  if(S.herName === 'Ona') S.herName = 'Gosia';
+  DB.set('profilJakuba', true); DB.set('set', S);
+}
+
 migracjaNaDaty();
 sprzatnijPrzeszlosc();
 
