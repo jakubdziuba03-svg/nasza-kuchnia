@@ -1185,11 +1185,34 @@ function openSync(){
   d.push('<button class="btn ghost wide" data-syncpaste="1">Wklej zaproszenie</button>');
   d.push('</div>');
 
+  d.push('<h2>Kto jest podłączony</h2><div class="card tight"><div id="syncDev" class="tiny">Sprawdzam…</div></div>');
   if(SY.on) d.push('<button class="btn ghost wide" data-syncnow="1">🔄 Odśwież teraz</button>');
   d.push('</div>');
   openSheet(d.join(''));
+  checkDevices();
   const k = $('#syKey');
   if(k) k.oninput = () => { const u = urlFromKey(k.value.trim()); if(u && $('#syUrl')) $('#syUrl').value = u; };
+}
+
+/* sprawdza, czy drugi telefon w ogóle dotarł do bazy */
+async function checkDevices(){
+  const el = $('#syncDev'); if(!el) return;
+  if(!SY.url || !SY.key || !SY.pair){ el.textContent = 'Najpierw włącz synchronizację.'; return; }
+  try{
+    const r = await fetch(`${SY.url}/rest/v1/kuchnia?pair=eq.${encodeURIComponent(SY.pair)}&select=client,updated_at`, {headers:sbHead()});
+    if(!r.ok) throw new Error('HTTP '+r.status);
+    const rows = await r.json();
+    const inni = [...new Set(rows.map(x=>x.client))].filter(c=>c && c!==CLIENT);
+    const ost = rows.map(x=>x.updated_at).sort().pop();
+    const godz = ost ? new Date(ost).toLocaleTimeString('pl-PL',{hour:'2-digit',minute:'2-digit'}) : '—';
+    if(!rows.length){
+      el.innerHTML = '⚠️ <b>Pod tym kodem nie ma jeszcze żadnych danych.</b><br>Kliknij „Włącz synchronizację”.';
+    } else if(!inni.length){
+      el.innerHTML = '⚠️ <b>Na razie tylko ten telefon.</b><br>Drugi telefon nic tu jeszcze nie zapisał. Sprawdźcie na nim dwie rzeczy: czy kod pary to dokładnie <b>'+esc(SY.pair)+'</b> i czy status świeci na zielono. Jeśli używa starego pliku zamiast adresu ze strony — synchronizacji tam po prostu nie ma.';
+    } else {
+      el.innerHTML = '✅ Podłączone telefony: <b>'+(inni.length+1)+'</b> (ten i '+inni.length+'). Ostatnia zmiana o '+godz+'.';
+    }
+  }catch(e){ el.textContent = 'Nie udało się sprawdzić: '+e.message; }
 }
 
 /* ==========================================================================
@@ -1243,7 +1266,7 @@ go('plan'); toast('Wybierz miejsce w planie i dotknij „wybierz danie”'); ret
     startSync(); toast('Łączę…'); openSync(); return;
   }
   if(D.syncoff){ stopSync(); openSync(); toast('Synchronizacja wyłączona'); return; }
-  if(D.syncnow){ syncPull(); toast('Odświeżam…'); return; }
+  if(D.syncnow){ syncPull().then(checkDevices); toast('Odświeżam…'); return; }
   if(D.synccopy){
     const inv = ['kuchnia', SY.url || urlFromKey($('#syKey').value.trim()), $('#syKey').value.trim(), $('#syPair').value.trim().toUpperCase()].join('|');
     if(navigator.share) navigator.share({text:inv}).catch(()=>{});
