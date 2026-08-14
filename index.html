@@ -1010,13 +1010,25 @@ function openSettings(){
 /* ==========================================================================
    SYNCHRONIZACJA (Supabase) — wspólne dane i skreślanie na żywo
    ========================================================================== */
-let SY  = DB.get('sync', {url:'https://lpsrpmowxrdizuzjqtrc.supabase.co', key:'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imxwc3JwbW93eHJkaXp1empxdHJjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODY2OTc1MzQsImV4cCI6MjEwMjI3MzUzNH0.a9tNw1QXUapbKGVM-i-yQ-6QraOInlc5sm3SqZIx48A', pair:'', on:false});
+const DEF_URL = 'https://lpsrpmowxrdizuzjqtrc.supabase.co';
+const DEF_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imxwc3JwbW93eHJkaXp1empxdHJjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODY2OTc1MzQsImV4cCI6MjEwMjI3MzUzNH0.a9tNw1QXUapbKGVM-i-yQ-6QraOInlc5sm3SqZIx48A';
+let SY  = DB.get('sync', {url:DEF_URL, key:DEF_KEY, pair:'', on:false});
+
+/* Wyławia adres, klucz i kod pary z DOWOLNEGO tekstu — obojętne, co i gdzie
+   ktoś wklei. Dzięki temu sklejka typu "adres|klucz" już niczego nie psuje. */
+function wylow(txt){
+  const t = String(txt||'').replace(/\s+/g,' ').trim();
+  const klucz = (t.match(/eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/)||[])[0] || '';
+  const adres = (t.match(/https:\/\/[a-z0-9-]+\.supabase\.co/i)||[])[0] || '';
+  const kody  = t.replace(klucz,'').match(/\b[A-Z0-9]{4}-[A-Z0-9]{4}\b/g) || [];
+  return {klucz, adres, kod: kody[0] || ''};
+}
 let BTS = DB.get('bts', {});           // kiedy skreślono dany produkt (do scalania)
 let CLIENT = DB.get('client', '');
 if(!CLIENT){ CLIENT = Math.random().toString(36).slice(2,10); DB.set('client', CLIENT); }
 
-let syncStatus = 'off';                 // off | laczenie | live | zapas | blad
-let ws = null, wsTimer = null, pollTimer = null, pushTimer = null, wsTry = 0;
+let syncStatus = 'off', syncErr = '';                 // off | laczenie | live | zapas | blad
+let ws = null, wsTimer = null, pollTimer = null, pushTimer = null, presTimer = null, wsTry = 0;
 const lastSeen = {}, lastSent = {};
 
 /* z klucza da się odczytać adres projektu — nie trzeba go wpisywać ręcznie */
@@ -1057,7 +1069,9 @@ async function syncPull(){
   if(!SY.on) return;
   try{
     const r = await fetch(`${SY.url}/rest/v1/kuchnia?pair=eq.${encodeURIComponent(SY.pair)}&select=doc,data,client,updated_at`, {headers:sbHead()});
+    if(r.status===401 || r.status===403){ setStatus('blad'); syncErr = 'Klucz jest nieprawidłowy — kliknij „Wstaw poprawny klucz”.'; return; }
     if(!r.ok) throw new Error('HTTP '+r.status);
+    syncErr = '';
     (await r.json()).forEach(applyRow);
     if(syncStatus==='laczenie'||syncStatus==='blad') setStatus(ws && ws.readyState===1 ? 'live' : 'zapas');
     renderAll();
@@ -1094,6 +1108,16 @@ async function pushChanged(){
     }
     if(syncStatus==='blad') setStatus(ws && ws.readyState===1 ? 'live' : 'zapas');
   }catch(e){ setStatus('blad'); }
+}
+/* każdy telefon melduje się własnym wierszem "dev:<id>" — dzięki temu
+   naprawdę widać, kto jest podłączony (zwykłe wiersze nadpisuje ostatni zapis) */
+async function pushPresence(){
+  if(!SY.on || !SY.pair) return;
+  try{
+    await fetch(`${SY.url}/rest/v1/kuchnia?on_conflict=pair,doc`, {method:'POST',
+      headers:Object.assign(sbHead(), {'Prefer':'resolution=merge-duplicates,return=minimal'}),
+      body: JSON.stringify([{pair:SY.pair, doc:'dev:'+CLIENT, data:{ts:Date.now()}, client:CLIENT}])});
+  }catch(e){}
 }
 function schedulePush(){ if(!SY.on) return; clearTimeout(pushTimer); pushTimer = setTimeout(pushChanged, 400); }
 
@@ -1133,7 +1157,7 @@ function connectWS(){
 function startPolling(){ clearInterval(pollTimer); pollTimer = setInterval(()=>{ if(!document.hidden) syncPull(); }, 6000); }
 function stopSync(){
   SY.on=false; DB.set('sync',SY);
-  clearInterval(pollTimer); clearInterval(wsTimer);
+  clearInterval(pollTimer); clearInterval(wsTimer); clearInterval(presTimer);
   try{ if(ws) ws.close(); }catch(e){}
   ws=null; setStatus('off');
 }
@@ -1143,10 +1167,12 @@ async function startSync(){
   setStatus('laczenie');
   await syncPull();
   await pushChanged();
+  await pushPresence();
+  clearInterval(presTimer); presTimer = setInterval(pushPresence, 300000);
   connectWS(); startPolling();
 }
 if(SY.on) setTimeout(startSync, 300);
-document.addEventListener('visibilitychange', ()=>{ if(!document.hidden && SY.on) syncPull(); });
+document.addEventListener('visibilitychange', ()=>{ if(!document.hidden && SY.on){ syncPull(); pushPresence(); } });
 
 /* --- para w sklepie --- */
 const STAT = {
@@ -1158,7 +1184,8 @@ const STAT = {
 };
 function openSync(){
   if(!S.pairCode){ S.pairCode = Math.random().toString(36).slice(2,6).toUpperCase() + '-' + Math.random().toString(36).slice(2,6).toUpperCase(); save(); }
-  const st = STAT[syncStatus] || STAT.off;
+  const st = (STAT[syncStatus] || STAT.off).slice();
+  if(syncStatus==='blad' && syncErr) st[2] = syncErr;
   const d = [`<div class="sheet-h"><h3>👫 Para w sklepie</h3><button class="icobtn" data-close="1">✕</button></div><div id="syncBox">`];
 
   d.push(`<div class="card tight" style="display:flex;gap:11px;align-items:center">
@@ -1172,7 +1199,8 @@ function openSync(){
   d.push('<div class="tiny">Ten sam kod musi być wpisany na obu telefonach. Kto go zna, widzi Wasze dane — więc nie wrzucajcie go nigdzie publicznie.</div></div>');
 
   d.push('<h2>Połączenie</h2><div class="card">');
-  d.push(`<label class="f"><span>Klucz anon z Supabase</span><textarea id="syKey" rows="3" placeholder="eyJhbGciOi...">${esc(SY.key)}</textarea></label>`);
+  d.push(`<label class="f"><span>Klucz z Supabase — możesz tu wkleić cokolwiek, sam wyłuskam co trzeba</span><textarea id="syKey" rows="3" placeholder="eyJhbGciOi...">${esc(SY.key)}</textarea></label>`);
+  d.push('<button class="btn ghost sm" data-synckey="1" style="margin-bottom:10px">↺ Wstaw poprawny klucz</button>');
   d.push(`<label class="f"><span>Adres projektu (uzupełnia się sam)</span><input id="syUrl" value="${esc(SY.url)}" placeholder="https://xxxx.supabase.co"></label>`);
   d.push(`<label class="f"><span>Kod pary</span><input id="syPair" value="${esc(SY.pair||S.pairCode)}"></label>`);
   d.push('<button class="btn wide" data-syncon="1">' + (SY.on ? 'Zapisz i połącz ponownie' : 'Włącz synchronizację') + '</button>');
@@ -1189,7 +1217,7 @@ function openSync(){
   if(SY.on) d.push('<button class="btn ghost wide" data-syncnow="1">🔄 Odśwież teraz</button>');
   d.push('</div>');
   openSheet(d.join(''));
-  checkDevices();
+  checkDevices(); setTimeout(checkDevices, 2500);
   const k = $('#syKey');
   if(k) k.oninput = () => { const u = urlFromKey(k.value.trim()); if(u && $('#syUrl')) $('#syUrl').value = u; };
 }
@@ -1199,11 +1227,14 @@ async function checkDevices(){
   const el = $('#syncDev'); if(!el) return;
   if(!SY.url || !SY.key || !SY.pair){ el.textContent = 'Najpierw włącz synchronizację.'; return; }
   try{
-    const r = await fetch(`${SY.url}/rest/v1/kuchnia?pair=eq.${encodeURIComponent(SY.pair)}&select=client,updated_at`, {headers:sbHead()});
+    const r = await fetch(`${SY.url}/rest/v1/kuchnia?pair=eq.${encodeURIComponent(SY.pair)}&select=doc,client,updated_at`, {headers:sbHead()});
     if(!r.ok) throw new Error('HTTP '+r.status);
     const rows = await r.json();
-    const inni = [...new Set(rows.map(x=>x.client))].filter(c=>c && c!==CLIENT);
-    const ost = rows.map(x=>x.updated_at).sort().pop();
+    const meldunki = rows.filter(x=>String(x.doc).indexOf('dev:')===0);
+    const inni = meldunki.length
+      ? meldunki.map(x=>String(x.doc).slice(4)).filter(c=>c!==CLIENT)
+      : [...new Set(rows.map(x=>x.client))].filter(c=>c && c!==CLIENT);
+    const ost = rows.filter(x=>String(x.doc).indexOf('dev:')!==0).map(x=>x.updated_at).sort().pop();
     const godz = ost ? new Date(ost).toLocaleTimeString('pl-PL',{hour:'2-digit',minute:'2-digit'}) : '—';
     if(!rows.length){
       el.innerHTML = '⚠️ <b>Pod tym kodem nie ma jeszcze żadnych danych.</b><br>Kliknij „Włącz synchronizację”.';
@@ -1219,7 +1250,7 @@ async function checkDevices(){
    OBSŁUGA KLIKNIĘĆ
    ========================================================================== */
 document.addEventListener('click', e => {
-  const el = e.target.closest('[data-day],[data-tog],[data-open],[data-mul],[data-del],[data-pick],[data-go],[data-buy],[data-clear],[data-share],[data-new],[data-fr],[data-wsave],[data-demo],[data-close],[data-setmul],[data-plate],[data-savemul],[data-addplan],[data-delrec],[data-set],[data-iadd],[data-irm],[data-padd],[data-sadd],[data-esave],[data-psave],[data-ssave],[data-reset],[data-msgadd],[data-msgdel],[data-msgsend],[data-auto],[data-autorun],[data-optb],[data-optq],[data-syncon],[data-syncoff],[data-synccopy],[data-syncpaste],[data-syncnow]');
+  const el = e.target.closest('[data-day],[data-tog],[data-open],[data-mul],[data-del],[data-pick],[data-go],[data-buy],[data-clear],[data-share],[data-new],[data-fr],[data-wsave],[data-demo],[data-close],[data-setmul],[data-plate],[data-savemul],[data-addplan],[data-delrec],[data-set],[data-iadd],[data-irm],[data-padd],[data-sadd],[data-esave],[data-psave],[data-ssave],[data-reset],[data-msgadd],[data-msgdel],[data-msgsend],[data-auto],[data-autorun],[data-optb],[data-optq],[data-syncon],[data-synckey],[data-syncoff],[data-synccopy],[data-syncpaste],[data-syncnow]');
   if(!el) return;
   const D = el.dataset;
 
@@ -1258,13 +1289,20 @@ go('plan'); toast('Wybierz miejsce w planie i dotknij „wybierz danie”'); ret
   if(D.ssave){ saveSettings(); return; }
   if(D.reset){ if(confirm('Wyczyścić cały plan i listę?')){ PLAN={}; BOUGHT={}; save(); closeSheet(); renderAll(); } return; }
   if(D.syncon){
-    SY.key = $('#syKey').value.trim();
-    SY.url = ($('#syUrl').value.trim() || urlFromKey(SY.key)).replace(/\/+$/,'');
-    SY.pair = $('#syPair').value.trim().toUpperCase();
-    if(!SY.key || !SY.url || !SY.pair){ toast('Uzupełnij klucz i kod pary'); return; }
+    const w = wylow($('#syKey').value + ' ' + $('#syUrl').value + ' ' + $('#syPair').value);
+    const podmiana = !w.klucz && $('#syKey').value.trim() !== '';
+    SY.key  = w.klucz || DEF_KEY;
+    SY.url  = (w.adres || $('#syUrl').value.trim() || urlFromKey(SY.key) || DEF_URL).replace(/\/+$/,'');
+    SY.pair = ($('#syPair').value.trim().toUpperCase().match(/\b[A-Z0-9]{4}-[A-Z0-9]{4}\b/) || [w.kod])[0] || '';
+    if(!/^eyJ[\w-]+\.[\w-]+\.[\w-]+$/.test(SY.key)){ toast('To nie wygląda na klucz z Supabase'); return; }
+
+    if(!SY.pair){ toast('Wpisz kod pary, np. 9KKH-STE8'); return; }
     S.pairCode = SY.pair; DB.set('sync',SY); save();
-    startSync(); toast('Łączę…'); openSync(); return;
+    startSync();
+    toast(podmiana ? 'Klucz był uszkodzony — wstawiłem poprawny i łączę…' : 'Łączę…');
+    openSync(); return;
   }
+  if(D.synckey){ $('#syKey').value = DEF_KEY; $('#syUrl').value = DEF_URL; toast('Klucz przywrócony — kliknij „Włącz”'); return; }
   if(D.syncoff){ stopSync(); openSync(); toast('Synchronizacja wyłączona'); return; }
   if(D.syncnow){ syncPull().then(checkDevices); toast('Odświeżam…'); return; }
   if(D.synccopy){
@@ -1274,9 +1312,10 @@ go('plan'); toast('Wybierz miejsce w planie i dotknij „wybierz danie”'); ret
     return;
   }
   if(D.syncpaste){
-    const parts = $('#syPaste').value.trim().split('|');
-    if(parts.length<4 || parts[0]!=='kuchnia'){ toast('To nie wygląda na zaproszenie'); return; }
-    SY.url = parts[1].replace(/\/+$/,''); SY.key = parts[2]; SY.pair = parts[3].toUpperCase();
+    const w = wylow($('#syPaste').value);
+    if(!w.klucz && !w.kod){ toast('Nie znalazłem tu ani klucza, ani kodu pary'); return; }
+    SY.url = (w.adres || DEF_URL).replace(/\/+$/,''); SY.key = w.klucz || DEF_KEY; SY.pair = w.kod || SY.pair;
+    if(!SY.pair){ toast('W zaproszeniu brakuje kodu pary'); return; }
     S.pairCode = SY.pair; DB.set('sync',SY); save(); startSync(); openSync(); toast('Ustawione ✓'); return;
   }
   if(D.auto){ openAuto(); return; }
