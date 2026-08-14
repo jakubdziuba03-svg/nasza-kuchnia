@@ -218,10 +218,24 @@ table.log td{padding:7px 4px;border-bottom:1px solid var(--line);font-variant-nu
 
 /* --- 1. TRWAŁY ZAPIS (bezpieczny, nie wywala się gdy pamięć zablokowana) --- */
 const mem = {};
+/* DB.blad — czy ostatni zapis do pamięci telefonu się nie powiódł */
 const DB = {
-  get(k, d){ try{ const v = localStorage.getItem(k); return v==null ? (k in mem ? mem[k] : d) : JSON.parse(v); }
-             catch(e){ return (k in mem) ? mem[k] : d; } },
-  set(k, v){ mem[k]=v; try{ localStorage.setItem(k, JSON.stringify(v)); }catch(e){} }
+  get(k, d){
+    if(DB.blad && (k in mem)) return mem[k];       // zapis padł: pamięć ulotna jest świeższa
+    try{ const v = localStorage.getItem(k); return v==null ? (k in mem ? mem[k] : d) : JSON.parse(v); }
+    catch(e){ return (k in mem) ? mem[k] : d; }
+  },
+  set(k, v){
+    mem[k]=v;
+    try{ localStorage.setItem(k, JSON.stringify(v)); DB.blad=false; }
+    catch(e){
+      /* pamięć pełna albo zablokowana — dane zostają tylko w pamięci ulotnej,
+         więc użytkownik MUSI się o tym dowiedzieć zamiast stracić je po cichu */
+      if(!DB.blad){ DB.blad=true;
+        try{ toast('Nie mogę zapisać danych w telefonie — zwolnij miejsce, bo po zamknięciu apki przepadną'); }catch(_){}
+      }
+    }
+  }
 };
 
 /* --- 2. ALEJKI W SKLEPIE (kolejność = kolejność chodzenia po sklepie) --- */
@@ -387,7 +401,7 @@ const save = () => { DB.set('set',S); DB.set('plan',PLAN); DB.set('bought',BOUGH
 
 /* --- 6. DROBNE POMOCNIKI --- */
 const $  = s => document.querySelector(s);
-const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const r0 = n => Math.round(n);
 const r1 = n => Math.round(n*10)/10;
 const dayDate = i => { const d = new Date(); d.setDate(d.getDate()+i); return d; };
@@ -421,6 +435,10 @@ function sprzatnijPrzeszlosc(){
     if(/^\d{4}-\d{2}-\d{2}$/.test(d) && d < dzis){ delete PLAN[k]; zmiana = true; } });
   Object.keys(TRAIN).forEach(k=>{
     if(/^\d{4}-\d{2}-\d{2}$/.test(k) && k < dzis){ delete TRAIN[k]; zmiana = true; } });
+  if(RECDEL.length > 300){ RECDEL = RECDEL.slice(-300); DB.set('recdel',RECDEL); }
+  if(MSGDEL.length > 300){ MSGDEL = MSGDEL.slice(-300); DB.set('msgdel',MSGDEL); }
+  Object.keys(BTS).forEach(p=>{ if(!P[p]) delete BTS[p]; });
+  DB.set('bts', BTS);
   const granica = iso(new Date(Date.now() - 60*864e5));
   Object.keys(EATEN).forEach(k=>{ if(k < granica){ delete EATEN[k]; zmiana = true; } });
   if(zmiana){ DB.set('plan',PLAN); DB.set('train',TRAIN); DB.set('eaten',EATEN); }
@@ -437,9 +455,13 @@ function bmrCalc(sex, kg, cm, age){
 /* aktualna waga: średnia z 7 dni, a jak brak — ostatni pomiar */
 function wagaAkt(who){
   const rows = weightRows(), k = who==='him' ? 'him' : 'her';
-  const ost = rows.map(r=>r[k]).filter(v=>typeof v==='number');
-  if(!ost.length) return 0;
-  const s = ost.slice(-7);
+  const zPomiarem = rows.filter(r=>typeof r[k]==='number');
+  if(!zPomiarem.length) return 0;
+  /* średnia z 7 dni licząc od OSTATNIEGO pomiaru, a nie z siedmiu dowolnie
+     odległych wpisów */
+  const koniec = new Date(zPomiarem[zPomiarem.length-1].d).getTime();
+  const s = zPomiarem.filter(r=>{ const t=new Date(r.d).getTime();
+    return t > koniec - 7*864e5 && t <= koniec; }).map(r=>r[k]);
   return s.reduce((a,b)=>a+b,0)/s.length;
 }
 function profil(who){
@@ -476,7 +498,11 @@ function zjedzone(dk, who){
   const dz = dziennik(dk)[who];
   let kcal = 0, b = 0;
   SLOTS.forEach(([sk])=>{
-    if(!dz.slots[sk]) return;
+    const zapis = dz.slots[sk];
+    if(!zapis) return;
+    /* przy odhaczeniu zapamiętujemy wyliczone wartości — dzięki temu skasowanie
+       przepisu nie zeruje wstecz tego, co ktoś faktycznie zjadł */
+    if(typeof zapis === 'object' && zapis.kcal != null){ kcal += zapis.kcal; b += zapis.b||0; return; }
     const e = PLAN[dk+'|'+sk]; if(!e) return;
     const rec = recById2(e.r); if(!rec) return;
     const t = recipeTotals(rec, 1);
@@ -546,7 +572,7 @@ function renderPlan(){
       const t = recipeTotals(rec, 1);
       const bat = (e.mul||1)>1 ? ` • gotujecie na ${e.mul} dni` : '';
       d.push(`<button class="chk ${e.on!==false?'on':''}" data-tog="${key}">✓</button>`);
-      d.push(`<div class="nm" data-open="${rec.id}">${rec.em||'🍽️'} ${esc(rec.n)}<small>${t.g} g • ${t.kcal} kcal na dwoje${bat}</small></div>`);
+      d.push(`<div class="nm" data-open="${esc(rec.id)}" data-slot="${esc(key)}">${esc(rec.em||'🍽️')} ${esc(rec.n)}<small>${t.g} g • ${t.kcal} kcal na dwoje${bat}</small></div>`);
       d.push(`<button class="xmul" data-mul="${key}">×${e.mul||1}</button>`);
       d.push(`<button class="icobtn" data-del="${key}" style="width:32px;height:32px;font-size:14px">✕</button>`);
     }else{
@@ -594,7 +620,12 @@ function renderPlan(){
     d.push(`<div class="pcol"><div class="pnm" style="color:var(--her)">${esc(S.herName)}</div><div class="pv">${zr.kcal} <small>kcal • ${zr.b} g B</small></div></div>`);
     d.push('</div></div>');
   }
-  const cnt = Object.values(PLAN).filter(e=>e && e.on!==false).length;
+  const cnt = Object.entries(PLAN).filter(([k,e])=>{
+    if(!e || e.on===false) return false;
+    const d0 = k.split('|')[0];
+    for(let i=0;i<S.days;i++) if(dayKey(i)===d0) return true;
+    return false;
+  }).length;
   d.push('<button class="btn ghost wide" data-jem="1" style="margin-bottom:9px">🍽️ Co zjedliście?</button>');
   d.push('<button class="btn ghost wide" data-auto="1" style="margin-bottom:9px">✨ Ułóż plan automatycznie</button>');
   d.push(`<button class="btn wide" data-go="shop">🛒 Zrób listę zakupów (${cnt} dań)</button>`);
@@ -609,8 +640,11 @@ const recById2 = id => ALL().find(x=>x.id===id);
    ========================================================================== */
 function buildList(){
   const need = {}, from = {};
+  const okno = {};
+  for(let i=0;i<S.days;i++) okno[dayKey(i)] = 1;
   Object.entries(PLAN).forEach(([k,e])=>{
     if(!e || e.on===false) return;
+    if(!okno[k.split('|')[0]]) return;          // dni spoza okna nie idą na zakupy
     const rec = recById2(e.r); if(!rec) return;
     rec.ing.forEach(([pid,q])=>{
       if(!P[pid]) return;
@@ -681,11 +715,11 @@ function renderShop(){
         const packs = Math.ceil(q/p.pack), rest = packs*p.pack - q;
         packInfo = `<div class="tiny">${packs} × opakowanie ${fmtQ(pid,p.pack)}` + (rest>0 ? ` <span style="color:var(--warn)">• zostanie ${fmtQ(pid,rest)}</span>` : ' <span style="color:var(--acc)">• równo</span>') + '</div>';
       }
-      d.push(`<div class="item ${BOUGHT[pid]?'done':''}" data-buy="${pid}">
+      d.push(`<div class="item ${BOUGHT[pid]?'done':''}" data-buy="${esc(pid)}">
         <button class="chk ${BOUGHT[pid]?'on':''}">✓</button>
         <div class="txt"><b>${esc(p.n)} — ${fmtQ(pid,q)}</b>${packInfo}
         <div class="tiny" style="opacity:.75">${esc([...new Set(from[pid])].join(' + '))}</div></div>
-        <button class="xmul" data-mam="${pid}" title="mam w domu">🥫</button></div>`);
+        <button class="xmul" data-mam="${esc(pid)}" title="mam w domu">🥫</button></div>`);
     });
     d.push('</div>');
   });
@@ -716,7 +750,7 @@ function renderRec(){
   d.push('<div class="rlist">');
   list.forEach(r=>{
     const t = recipeTotals(r);
-    d.push(`<button class="ritem" data-open="${r.id}"><span class="em">${r.em||'🍽️'}</span>
+    d.push(`<button class="ritem" data-open="${esc(r.id)}"><span class="em">${esc(r.em||'🍽️')}</span>
       <span class="nm"><b>${esc(r.n)}</b><span>${t.kcal} kcal • ${t.b} g białka • ${r.t||15} min</span></span>
       <span class="pill g">${r.ing.length} skł.</span></button>`);
   });
@@ -744,9 +778,9 @@ function renderFridge(){
   zapasy.forEach(pid=>{
     d.push(`<div class="row" style="margin-bottom:8px">
       <span style="flex:1;font-size:14.5px">${esc(P[pid].n)}</span>
-      <input data-pq="${pid}" type="number" inputmode="decimal" value="${r1(PANTRY[pid])}" style="width:92px">
+      <input data-pq="${esc(pid)}" type="number" inputmode="decimal" value="${r1(PANTRY[pid])}" style="width:92px">
       <span class="tiny" style="width:26px">${P[pid].u}</span>
-      <button class="icobtn" data-prm="${pid}" style="width:34px;height:34px;font-size:13px">✕</button></div>`);
+      <button class="icobtn" data-prm="${esc(pid)}" style="width:34px;height:34px;font-size:13px">✕</button></div>`);
   });
   d.push('<div class="row" style="gap:8px;margin-top:6px">');
   d.push('<select id="pAdd" style="flex:1">' + prodOptions('ryz') + '</select>');
@@ -775,7 +809,7 @@ function renderFridge(){
     if(!scored.length) d.push('<div class="empty">Nic nie pasuje. Spróbuj innych nazw.</div>');
     d.push('<div class="rlist">');
     scored.slice(0,8).forEach(({r,pct,miss})=>{
-      d.push(`<button class="ritem" data-open="${r.id}"><span class="em">${r.em||'🍽️'}</span>
+      d.push(`<button class="ritem" data-open="${esc(r.id)}"><span class="em">${esc(r.em||'🍽️')}</span>
         <span class="nm"><b>${esc(r.n)}</b><span>${miss.length? 'dokupić: '+miss.slice(0,3).map(([p])=>esc(P[p].n)).join(', ') : 'masz wszystko!'}</span></span>
         <span class="pill">${pct}%</span></button>`);
     });
@@ -792,9 +826,14 @@ function renderFridge(){
 function weightRows(){
   return Object.entries(WEIGHT).map(([d,v])=>Object.assign({d}, v)).sort((a,b)=>a.d<b.d?-1:1);
 }
+/* Średnia z ostatnich 7 DNI KALENDARZOWYCH. Wcześniej liczona z 7 ostatnich
+   wpisów — przy ważeniu raz w tygodniu brała pomiary sprzed półtora miesiąca. */
 function movAvg(rows, key, win=7){
   return rows.map((r,i)=>{
-    const s = rows.slice(Math.max(0,i-win+1), i+1).map(x=>x[key]).filter(v=>typeof v==='number');
+    const koniec = new Date(r.d).getTime(), start = koniec - (win-1)*864e5;
+    const s = rows.slice(0, i+1)
+      .filter(x=>{ const t = new Date(x.d).getTime(); return t>=start && t<=koniec; })
+      .map(x=>x[key]).filter(v=>typeof v==='number');
     return s.length ? s.reduce((a,b)=>a+b,0)/s.length : null;
   });
 }
@@ -802,15 +841,20 @@ function movAvg(rows, key, win=7){
    Zwraca zmianę w kg albo null, gdy za mało pomiarów. */
 function zastoj(){
   const rows = weightRows();
-  const sr = (k, off) => {
-    const wyc = rows.slice(Math.max(0, rows.length-7-off), rows.length-off)
+  /* okna liczone po DATACH, nie po liczbie wpisów, i nigdy zachodzące na siebie —
+     wcześniej przy 5-6 pomiarach apka ogłaszała zastój przy prawidłowym spadku */
+  const dzis = new Date();
+  const sr = (k, offDni) => {
+    const od = iso(new Date(dzis.getTime() - (offDni+7)*864e5));
+    const doo = iso(new Date(dzis.getTime() - offDni*864e5));
+    const wyc = rows.filter(r=>r.d > od && r.d <= doo)
                     .map(r=>r[k]).filter(v=>typeof v==='number');
     return wyc.length>=3 ? wyc.reduce((a,b)=>a+b,0)/wyc.length : null;
   };
   const out = {};
   ['him','her'].forEach(k=>{
-    const teraz = sr(k,0), tydzTemu = sr(k,7);
-    out[k] = (teraz!=null && tydzTemu!=null) ? teraz - tydzTemu : null;
+    const ter = sr(k,0), tydzTemu = sr(k,7);
+    out[k] = (ter!=null && tydzTemu!=null) ? ter - tydzTemu : null;
   });
   return out;
 }
@@ -826,10 +870,10 @@ function renderWeight(){
 
   d.push('<div class="card"><div class="between" style="margin-bottom:10px"><b style="font-size:14.5px">Pomiar — rano, na czczo</b><span class="pill g">'+today.split('-').reverse().join('.')+'</span></div>');
   d.push('<div class="grid2">');
-  d.push(`<label class="f"><span class="him">${esc(S.himName)} — waga (kg)</span><input id="wHim" type="number" step="0.1" inputmode="decimal" value="${t.him??''}"></label>`);
-  d.push(`<label class="f"><span class="her">${esc(S.herName)} — waga (kg)</span><input id="wHer" type="number" step="0.1" inputmode="decimal" value="${t.her??''}"></label>`);
-  d.push(`<label class="f"><span class="him">${esc(S.himName)} — pas (cm)</span><input id="pHim" type="number" step="0.5" inputmode="decimal" value="${t.waistHim??''}"></label>`);
-  d.push(`<label class="f"><span class="her">${esc(S.herName)} — pas (cm)</span><input id="pHer" type="number" step="0.5" inputmode="decimal" value="${t.waistHer??''}"></label>`);
+  d.push(`<label class="f"><span class="him">${esc(S.himName)} — waga (kg)</span><input id="wHim" type="number" step="0.1" inputmode="decimal" value="${esc(t.him??'')}"></label>`);
+  d.push(`<label class="f"><span class="her">${esc(S.herName)} — waga (kg)</span><input id="wHer" type="number" step="0.1" inputmode="decimal" value="${esc(t.her??'')}"></label>`);
+  d.push(`<label class="f"><span class="him">${esc(S.himName)} — pas (cm)</span><input id="pHim" type="number" step="0.5" inputmode="decimal" value="${esc(t.waistHim??'')}"></label>`);
+  d.push(`<label class="f"><span class="her">${esc(S.herName)} — pas (cm)</span><input id="pHer" type="number" step="0.5" inputmode="decimal" value="${esc(t.waistHer??'')}"></label>`);
   d.push('</div><button class="btn wide" data-wsave="1">Zapisz pomiar</button></div>');
 
   if(rows.length>=2){
@@ -867,7 +911,7 @@ function renderWeight(){
   if(rows.length){
     d.push('<h2>Historia</h2><div class="card"><table class="log"><tr><th>Data</th><th>'+esc(S.himName)+'</th><th>'+esc(S.herName)+'</th><th>Pas</th></tr>');
     rows.slice().reverse().slice(0,20).forEach(r=>{
-      d.push(`<tr><td>${r.d.slice(5).split('-').reverse().join('.')}</td><td>${r.him??'—'}</td><td>${r.her??'—'}</td><td class="tiny">${r.waistHim??'—'} / ${r.waistHer??'—'}</td></tr>`);
+      d.push(`<tr><td>${r.d.slice(5).split('-').reverse().join('.')}</td><td>${esc(r.him??'—')}</td><td>${esc(r.her??'—')}</td><td class="tiny">${esc(r.waistHim??'—')} / ${esc(r.waistHer??'—')}</td></tr>`);
     });
     d.push('</table></div>');
     d.push('<button class="btn ghost wide" data-demo="1" style="margin-top:4px">Wgraj przykładowe dane (do obejrzenia wykresu)</button>');
@@ -932,7 +976,7 @@ function drawRecipe(rec){
   const mul = sheetMul, t = recipeTotals(rec, mul), sh = shareHim();
   const gHim = r0(t.g*sh), gHer = t.g-gHim, kHim = r0(t.kcal*sh), kHer = t.kcal-kHim;
   const d = [];
-  d.push(`<div class="sheet-h"><h3>${rec.em||'🍽️'} ${esc(rec.n)}</h3><button class="icobtn" data-close="1">✕</button></div>`);
+  d.push(`<div class="sheet-h"><h3>${esc(rec.em||'🍽️')} ${esc(rec.n)}</h3><button class="icobtn" data-close="1">✕</button></div>`);
 
   /* batch cooking */
   d.push('<div class="card tight"><div class="between"><b style="font-size:13.5px">🍲 Gotuję na</b><div class="seg" style="margin:0;flex:1;max-width:230px">');
@@ -1006,7 +1050,7 @@ function openPicker(key){
     if(!arr.length) return;
     d.push('<h2>'+label+'</h2><div class="rlist">');
     arr.forEach(r=>{ const t=recipeTotals(r);
-      d.push(`<button class="ritem" data-set="${key}~${r.id}"><span class="em">${r.em||'🍽️'}</span>
+      d.push(`<button class="ritem" data-set="${esc(key)}~${esc(r.id)}"><span class="em">${esc(r.em||'🍽️')}</span>
         <span class="nm"><b>${esc(r.n)}</b><span>${t.kcal} kcal na dwoje • ${r.t||15} min</span></span></button>`); });
     d.push('</div>');
   };
@@ -1029,8 +1073,14 @@ function openEditor(rec){
   drawEditor();
 }
 function prodOptions(sel){
-  return Object.keys(P).sort((a,b)=>P[a].n.localeCompare(P[b].n,'pl'))
-    .map(p=>`<option value="${p}" ${p===sel?'selected':''}>${esc(P[p].n)}</option>`).join('');
+  let html = '';
+  /* gdy przepis odwołuje się do produktu, którego jeszcze nie ma (np. przyszedł
+     z drugiego telefonu przed listą produktów), pokazujemy to wprost zamiast
+     po cichu podmieniać składnik na pierwszy z brzegu */
+  if(sel && !P[sel]) html += `<option value="${esc(sel)}" selected>⚠️ nieznany produkt (${esc(sel)})</option>`;
+  html += Object.keys(P).sort((a,b)=>P[a].n.localeCompare(P[b].n,'pl'))
+    .map(p=>`<option value="${esc(p)}" ${p===sel?'selected':''}>${esc(P[p].n)}</option>`).join('');
+  return html;
 }
 function drawEditor(){
   const m = edMeta || {n:'', em:'🍽️', t:20, typ:'obiad', pieces:''};
@@ -1074,6 +1124,12 @@ function openNewProduct(){
   d.push('<label class="f"><span>Alejka w sklepie</span><select id="pA">'+AISLES.map(([k,n,e])=>`<option value="${k}">${e} ${n}</option>`).join('')+'</select></label>');
   d.push('<div class="grid2"><label class="f"><span>Jednostka</span><select id="pU"><option value="g">gramy</option><option value="ml">mililitry</option><option value="szt">sztuki</option></select></label>');
   d.push('<label class="f"><span>kcal / 100 g (lub za szt.)</span><input id="pK" type="number" inputmode="decimal" placeholder="np. 120"></label></div>');
+  d.push('<div class="tiny" style="margin:-4px 0 10px">Przepisz z etykiety wartości na 100 g. Bez nich apka pokaże zerowe białko.</div>');
+  d.push('<div class="grid2" style="grid-template-columns:1fr 1fr 1fr">');
+  d.push('<label class="f"><span>białko (g)</span><input id="pB" type="number" inputmode="decimal" placeholder="0"></label>');
+  d.push('<label class="f"><span>tłuszcz (g)</span><input id="pT" type="number" inputmode="decimal" placeholder="0"></label>');
+  d.push('<label class="f"><span>węgle (g)</span><input id="pW" type="number" inputmode="decimal" placeholder="0"></label>');
+  d.push('</div>');
   d.push('<div class="grid2"><label class="f"><span>Wielkość opakowania</span><input id="pP" type="number" inputmode="decimal" placeholder="np. 200"></label>');
   d.push('<label class="f"><span>Waga 1 szt. (g)</span><input id="pG" type="number" inputmode="decimal" placeholder="tylko dla sztuk"></label></div>');
   d.push('</div><button class="btn wide" data-psave="1">Dodaj produkt</button>');
@@ -1095,9 +1151,12 @@ function pool(slot){
 const rnd = a => a[Math.floor(Math.random()*a.length)];
 
 function planScore(days){
-  const kTarget = S.himKcal + S.herKcal, bTarget = S.himProt + S.herProt;
+  const bTarget = S.himProt + S.herProt;
   let score = 0; const used = {}; const counts = {};
-  days.forEach(day=>{
+  days.forEach((day, di)=>{
+    /* cel dnia z uwzględnieniem treningów — bez tego zaznaczenie treningu
+       podnosiło poprzeczkę, ale miska zostawała tej samej wielkości */
+    const kTarget = celDnia('him', dayKey(di)) + celDnia('her', dayKey(di));
     let k=0, b=0;
     Object.values(day).forEach(rec=>{
       if(!rec) return;
@@ -1132,8 +1191,9 @@ function buildCandidate(n){
     days.push({ sniadanie: rnd(pool('sniadanie')), obiad: blk.r, kolacja: rnd(pool('kolacja')), przekaska:null, _blk:blk });
   }
   /* przekąska tylko gdy brakuje kalorii */
-  const kTarget = S.himKcal + S.herKcal, pk = pool('przekaska');
-  days.forEach(day=>{
+  const pk = pool('przekaska');
+  days.forEach((day, di)=>{
+    const kTarget = celDnia('him', dayKey(di)) + celDnia('her', dayKey(di));
     const k = ['sniadanie','obiad','kolacja'].reduce((a,s)=>a+(day[s]?recipeTotals(day[s],1).kcal:0),0);
     if(k < kTarget-250 && pk.length) day.przekaska = rnd(pk);
   });
@@ -1160,6 +1220,7 @@ function generatePlan(n){
       }
     });
   });
+  Object.keys(PLAN).forEach(k=>znacz('plan',k));
   save();
   /* podsumowanie */
   let k=0,b=0;
@@ -1168,7 +1229,7 @@ function generatePlan(n){
 }
 
 function openAuto(){
-  const kT = S.himKcal+S.herKcal, bT = S.himProt+S.herProt;
+  const kT = celDnia('him', dayKey(0)) + celDnia('her', dayKey(0)), bT = S.himProt+S.herProt;
   const d = [`<div class="sheet-h"><h3>✨ Ułóż plan automatycznie</h3><button class="icobtn" data-close="1">✕</button></div>`];
   d.push(`<div class="ok">Dobiorę dania na <b>${S.days} dni</b> tak, żeby wyjść na około <b>${kT} kcal</b> i <b>${bT} g białka</b> dziennie na Was dwoje — bez powtarzania obiadów i tak, żeby zużyć te same opakowania w kilku daniach.</div>`);
   d.push('<div class="card">');
@@ -1193,7 +1254,7 @@ function openMsgs(){
     d.push('<h2>Do wysłania ('+MSGS.length+')</h2><div class="card">');
     MSGS.forEach((m,i)=>{
       d.push(`<div class="item"><div class="txt"><b style="font-weight:500;font-size:14px">${esc(m.t)}</b>
-        <div class="tiny">${m.d}</div></div><button class="icobtn" data-msgdel="${i}" style="width:30px;height:30px;font-size:12px">✕</button></div>`);
+        <div class="tiny">${esc(m.d)}</div></div><button class="icobtn" data-msgdel="${i}" style="width:30px;height:30px;font-size:12px">✕</button></div>`);
     });
     d.push('</div>');
     d.push('<button class="btn wide" data-msgmail="1">✉️ Wyślij do Claude\'a</button>');
@@ -1217,7 +1278,7 @@ function openJedzenie(){
     const t = recipeTotals(rec,1), sh = shareDnia(dk);
     d.push(`<div class="slot"><div class="slot-h">${sn}</div>
       <div class="between"><div style="flex:1">
-        <b style="font-size:14.5px">${rec.em||'🍽️'} ${esc(rec.n)}</b>
+        <b style="font-size:14.5px">${esc(rec.em||'🍽️')} ${esc(rec.n)}</b>
         <div class="tiny">${esc(S.himName)} ${r0(t.kcal*sh)} kcal • ${esc(S.herName)} ${t.kcal-r0(t.kcal*sh)} kcal</div>
       </div><div class="row" style="gap:7px">
         <button class="trchip ${dz.him.slots[sk]?'on him':''}" data-ate="${sk}~h">${esc(S.himName)}</button>
@@ -1343,7 +1404,11 @@ function wylow(txt){
 }
 let BTS = DB.get('bts', {});           // kiedy skreślono dany produkt (do scalania)
 let CLIENT = DB.get('client', '');
-if(!CLIENT){ CLIENT = Math.random().toString(36).slice(2,10); DB.set('client', CLIENT); }
+if(!CLIENT){
+  const b = new Uint8Array(8); (window.crypto||window.msCrypto).getRandomValues(b);
+  CLIENT = [...b].map(x=>x.toString(36)).join('').slice(0,12);
+  DB.set('client', CLIENT);
+}
 
 let syncStatus = 'off', syncErr = '';                 // off | laczenie | live | zapas | blad
 let ws = null, wsTimer = null, pollTimer = null, pushTimer = null, presTimer = null, wsTry = 0;
@@ -1358,7 +1423,12 @@ function urlFromKey(key){
 }
 
 const DOCS = {
-  plan:   {get:()=>PLAN,          set:v=>{ PLAN=v;   DB.set('plan',PLAN); }},
+  /* Plan, wagi, dziennik, spiżarnia i treningi scalamy WPIS PO WPISIE, ze
+     znacznikiem czasu przy każdym kluczu. Wcześniej leciało to jako jeden blok
+     „kto ostatni, ten lepszy" i przy równoczesnej edycji każde z Was traciło
+     swoją zmianę. */
+  plan:   {get:()=>({v:PLAN, t:TS.plan}),
+           set:v=>{ PLAN = scal(PLAN, 'plan', v); DB.set('plan',PLAN); }},
   /* przepisy: łączymy oba telefony po id, a skasowane pamiętamy osobno,
      żeby dwie osoby mogły dodawać dania równocześnie i nic nie ginęło */
   rec:    {get:()=>({list:CUSTOM, del:RECDEL}),
@@ -1366,24 +1436,34 @@ const DOCS = {
              const zdalne = Array.isArray(v) ? v : ((v&&v.list)||[]);
              const skas   = Array.isArray(v) ? [] : ((v&&v.del)||[]);
              RECDEL = [...new Set(RECDEL.concat(skas))];
+             /* przy tym samym przepisie wygrywa NOWSZA wersja — wcześniej zawsze
+                wygrywała lokalna, więc poprawka partnera nigdy nie docierała */
              const po = {};
-             CUSTOM.concat(zdalne).forEach(r=>{ if(r && r.id && !po[r.id]) po[r.id] = r; });
+             CUSTOM.concat(zdalne).forEach(r=>{
+               if(!r || !r.id) return;
+               const b = po[r.id];
+               if(!b || (r.ts||0) > (b.ts||0)) po[r.id] = r;
+             });
              CUSTOM = Object.values(po).filter(r=>RECDEL.indexOf(r.id) < 0);
              DB.set('myrec',CUSTOM); DB.set('recdel',RECDEL);
            }},
   prod:   {get:()=>MYP,
            set:v=>{ MYP = Object.assign({}, v||{}, MYP); Object.assign(P,MYP); DB.set('myprod',MYP); }},
-  weight: {get:()=>WEIGHT,        set:v=>{ WEIGHT=v; DB.set('weight',WEIGHT); }},
-  train:  {get:()=>TRAIN,         set:v=>{ TRAIN=v;  DB.set('train',TRAIN); }},
-  pantry: {get:()=>PANTRY,        set:v=>{ PANTRY=v; DB.set('pantry',PANTRY); }},
-  eaten:  {get:()=>EATEN,         set:v=>{ EATEN=v;  DB.set('eaten',EATEN); }},
+  weight: {get:()=>({v:WEIGHT, t:TS.weight}),
+           set:v=>{ WEIGHT = scal(WEIGHT, 'weight', v, true); DB.set('weight',WEIGHT); }},
+  train:  {get:()=>({v:TRAIN, t:TS.train}),
+           set:v=>{ TRAIN = scal(TRAIN, 'train', v); DB.set('train',TRAIN); }},
+  pantry: {get:()=>({v:PANTRY, t:TS.pantry}),
+           set:v=>{ PANTRY = scal(PANTRY, 'pantry', v); DB.set('pantry',PANTRY); }},
+  eaten:  {get:()=>({v:EATEN, t:TS.eaten}),
+           set:v=>{ EATEN = scalDziennik(EATEN, v); DB.set('eaten',EATEN); }},
   msgs:   {get:()=>({list:MSGS, del:MSGDEL}),
            set:v=>{
              const zdalne = Array.isArray(v) ? v : ((v&&v.list)||[]);
              const skas   = Array.isArray(v) ? [] : ((v&&v.del)||[]);
              MSGDEL = [...new Set(MSGDEL.concat(skas))];
              const widziane = {}, all = zdalne.concat(MSGS);
-             MSGS = all.filter(m=>{ const k = m.d+'|'+m.t;
+             MSGS = all.filter(m=>{ const k = m.id || (m.d+'|'+m.t);
                if(widziane[k] || MSGDEL.indexOf(k) >= 0) return false; widziane[k]=1; return true; });
              DB.set('msgs',MSGS); DB.set('msgdel',MSGDEL);
            }},
@@ -1394,6 +1474,8 @@ const DOCS = {
   bought: {get:()=>({b:BOUGHT, t:BTS}),
            set:v=>{
              const rb=(v&&v.b)||{}, rt=(v&&v.t)||{};
+             const maxR = Math.max(0, ...Object.values(rt).filter(x=>typeof x==='number'));
+             if(maxR > teraz()){ zegarOffset += (maxR - teraz()) + 1000; DB.set('zegarOffset', zegarOffset); }
              new Set([...Object.keys(rt),...Object.keys(BTS)]).forEach(pid=>{
                if((rt[pid]||0) > (BTS[pid]||0)){
                  if(rb[pid]) BOUGHT[pid]=true; else delete BOUGHT[pid];
@@ -1404,7 +1486,86 @@ const DOCS = {
            }}
 };
 
-const sbHead = () => ({'apikey':SY.key, 'Authorization':'Bearer '+SY.key, 'Content-Type':'application/json'});
+/* ---------- scalanie po kluczach ----------
+   TS[doc][klucz] = kiedy TEN telefon ostatnio zmienił ten wpis.
+   Zegar jest monotoniczny: nigdy nie cofa się poniżej tego, co już widzieliśmy,
+   więc rozjechany o kilka minut telefon nie „przegrywa” własnych świeżych zmian. */
+let TS = DB.get('ts', {plan:{}, weight:{}, train:{}, pantry:{}, eaten:{}});
+['plan','weight','train','pantry','eaten'].forEach(k=>{ TS[k] = TS[k] || {}; });
+let zegarOffset = DB.get('zegarOffset', 0);
+function teraz(){ return Date.now() + zegarOffset; }
+function znacz(doc, klucz){
+  TS[doc] = TS[doc] || {};
+  TS[doc][klucz] = Math.max(teraz(), (TS[doc][klucz]||0) + 1);
+  DB.set('ts', TS);
+}
+/* Dziennik ma dwa poziomy (dzień → osoba), a dopiski to listy. Scalamy więc
+   osobno każdą osobę w każdym dniu, a rzeczy zjedzone „spoza planu” łączymy
+   po identyfikatorach — dzięki temu batonik Jakuba i lody Gosi z tej samej
+   godziny nie kasują się nawzajem. */
+function scalDziennik(lokalne, paczka){
+  const zdalne = (paczka && paczka.v) ? paczka.v : (paczka || {});
+  const zt = (paczka && paczka.t) || {};
+  TS.eaten = TS.eaten || {};
+  const maxZ = Math.max(0, ...Object.values(zt).filter(x=>typeof x==='number'));
+  if(maxZ > teraz()){ zegarOffset += (maxZ - teraz()) + 1000; DB.set('zegarOffset', zegarOffset); }
+  const wynik = Object.assign({}, lokalne);
+  new Set(Object.keys(zdalne||{}).concat(Object.keys(lokalne||{}))).forEach(dk=>{
+    wynik[dk] = Object.assign({}, lokalne[dk]);
+    ['him','her'].forEach(w=>{
+      const kl = dk+'|'+w;
+      const zd = (zdalne[dk]||{})[w], lo = (lokalne[dk]||{})[w];
+      if(!zd){ if(lo) wynik[dk][w] = lo; return; }
+      if(!lo){ wynik[dk][w] = zd; TS.eaten[kl] = zt[kl] || 0; return; }
+      const nowszeZdalne = (zt[kl]||0) > (TS.eaten[kl]||0);
+      /* dopiski: suma obu list, bez powtórek */
+      const widz = {}, lista = [];
+      (lo.extra||[]).concat(zd.extra||[]).forEach(x=>{
+        const id = x.id || (x.n+'|'+x.k+'|'+x.b);
+        if(widz[id]) return; widz[id]=1; lista.push(x);
+      });
+      wynik[dk][w] = { slots: nowszeZdalne ? Object.assign({}, lo.slots, zd.slots) : Object.assign({}, zd.slots, lo.slots),
+                       extra: lista };
+      if(nowszeZdalne) TS.eaten[kl] = zt[kl];
+    });
+  });
+  DB.set('ts', TS);
+  return wynik;
+}
+
+function scal(lokalne, doc, paczka, glebokie){
+  const zdalne = (paczka && paczka.v) ? paczka.v : (paczka && !paczka.t ? paczka : {});
+  const zt = (paczka && paczka.t) || {};
+  TS[doc] = TS[doc] || {};
+  /* jeśli druga strona ma zegar do przodu, dostrajamy się, żeby nasze kolejne
+     zmiany nie były traktowane jako starsze */
+  const maxZdalny = Math.max(0, ...Object.values(zt).filter(x=>typeof x==='number'));
+  if(maxZdalny > teraz()) zegarOffset += (maxZdalny - teraz()) + 1000, DB.set('zegarOffset', zegarOffset);
+  const wynik = Object.assign({}, lokalne);
+  new Set(Object.keys(zdalne||{}).concat(Object.keys(lokalne||{}))).forEach(k=>{
+    const lt = TS[doc][k] || 0, rt = zt[k] || 0;
+    if(k in (zdalne||{})){
+      if(rt > lt){
+        if(glebokie && typeof zdalne[k]==='object' && typeof lokalne[k]==='object' && lokalne[k])
+          wynik[k] = Object.assign({}, lokalne[k], zdalne[k]);
+        else wynik[k] = zdalne[k];
+        TS[doc][k] = rt;
+      }
+    } else if(rt === 0 && lt === 0){
+      /* wpis, o którym druga strona nic nie wie i my go nie zmienialiśmy — zostaje */
+    } else if(!(k in (zdalne||{})) && (zt.__kasacje||{})[k] > lt){
+      delete wynik[k];
+    }
+  });
+  DB.set('ts', TS);
+  return wynik;
+}
+
+/* Kod pary leci w nagłówku przy KAŻDYM zapytaniu — reguła w bazie porównuje go
+   z kolumną pair, więc bez kodu nie da się ani odczytać, ani skasować cudzych
+   danych. Wcześniej filtr istniał tylko po stronie aplikacji, czyli wcale. */
+const sbHead = () => ({'apikey':SY.key, 'Authorization':'Bearer '+SY.key,
+                       'Content-Type':'application/json', 'x-pair': SY.pair || ''});
 const setStatus = s => { syncStatus = s; const b=$('#btnSync'); if(b) b.classList.toggle('live', s==='live'||s==='zapas'); if($('#syncBox')) openSync(); };
 
 async function syncPull(){
@@ -1420,8 +1581,21 @@ async function syncPull(){
   }catch(e){ setStatus('blad'); }
 }
 
+/* Sprawdza, czy dane z chmury mają sensowny kształt. Bez tego jeden uszkodzony
+   wiersz potrafił zapisać null do pamięci telefonu i unieruchomić apkę na stałe. */
+const KSZTALT = {
+  plan:'obj', train:'obj', pantry:'obj', weight:'obj', eaten:'obj', prod:'obj', set:'obj',
+  rec:'obj', msgs:'obj', bought:'obj'
+};
+function ksztaltOk(doc, v){
+  if(v === null || v === undefined) return false;
+  if(Array.isArray(v)) return doc==='rec' || doc==='msgs';      // stary format list
+  return typeof v === 'object';
+}
+
 function applyRow(row){
   if(!row || !DOCS[row.doc]) return;
+  if(!ksztaltOk(row.doc, row.data)){ console.warn('Pomijam uszkodzony wiersz:', row.doc); return; }
   if(row.client === CLIENT) return;                       // to nasz własny zapis
   const stamp = new Date(row.updated_at||0).getTime();
   if(row.doc!=='bought' && stamp <= (lastSeen[row.doc]||0)) return;
@@ -1507,6 +1681,8 @@ async function startSync(){
   if(!SY.url || !SY.key || !SY.pair) return;
   SY.on = true; DB.set('sync', SY);
   setStatus('laczenie');
+  /* najpierw wysyłamy to, co powstało bez zasięgu — inaczej chmura by to nadpisała */
+  await pushChanged();
   await syncPull();
   await pushChanged();
   await pushPresence();
@@ -1525,7 +1701,13 @@ const STAT = {
   blad:     ['🔴','Błąd połączenia','Sprawdź klucz i kod pary albo internet.']
 };
 function openSync(){
-  if(!S.pairCode){ S.pairCode = Math.random().toString(36).slice(2,6).toUpperCase() + '-' + Math.random().toString(36).slice(2,6).toUpperCase(); save(); }
+  if(!S.pairCode){
+    const znaki = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';   // bez mylących 0/O, 1/I
+    const buf = new Uint8Array(10);
+    (window.crypto || window.msCrypto).getRandomValues(buf);
+    const k = [...buf].map(b=>znaki[b % znaki.length]).join('');
+    S.pairCode = k.slice(0,5) + '-' + k.slice(5,10); save();
+  }
   const st = (STAT[syncStatus] || STAT.off).slice();
   if(syncStatus==='blad' && syncErr) st[2] = syncErr;
   const d = [`<div class="sheet-h"><h3>👫 Para w sklepie</h3><button class="icobtn" data-close="1">✕</button></div><div id="syncBox">`];
@@ -1602,33 +1784,36 @@ document.addEventListener('click', e => {
   const D = el.dataset;
 
   if(D.day!=null){ dayIdx = +D.day; renderPlan(); return; }
-  if(D.tog){ const p = PLAN[D.tog]; p.on = p.on===false; save(); renderPlan(); return; }
-  if(D.mul){ const p = PLAN[D.mul]; p.mul = (p.mul||1)%3+1; save(); renderPlan(); toast('Gotujecie na '+p.mul+(p.mul===1?' dzień':' dni')); return; }
-  if(D.del){ delete PLAN[D.del]; save(); renderPlan(); return; }
+  if(D.tog){ const p = PLAN[D.tog]; if(!p) { renderPlan(); return; } p.on = p.on===false; znacz('plan',D.tog); save(); renderPlan(); return; }
+  if(D.mul){ const p = PLAN[D.mul]; if(!p){ renderPlan(); return; } p.mul = (p.mul||1)%3+1; znacz('plan',D.mul); save(); renderPlan(); toast('Gotujecie na '+p.mul+(p.mul===1?' dzień':' dni')); return; }
+  if(D.del){ delete PLAN[D.del]; znacz('plan',D.del); save(); renderPlan(); return; }
   if(D.pick){ openPicker(D.pick); return; }
-  if(D.open){ openRecipe(D.open, findKey(D.open)); return; }
+  if(D.open){ openRecipe(D.open, D.slot || null); return; }
   if(D.go){ go(D.go); return; }
-  if(D.buy){ BOUGHT[D.buy] = !BOUGHT[D.buy]; if(!BOUGHT[D.buy]) delete BOUGHT[D.buy]; BTS[D.buy]=Date.now(); DB.set('bts',BTS); save(); renderShop(); return; }
-  if(D.clear){ const now=Date.now(); Object.keys(BOUGHT).forEach(p=>BTS[p]=now); BOUGHT = {}; DB.set('bts',BTS); save(); renderShop(); return; }
+  if(D.buy){ BOUGHT[D.buy] = !BOUGHT[D.buy]; if(!BOUGHT[D.buy]) delete BOUGHT[D.buy];
+    BTS[D.buy] = Math.max(teraz(), (BTS[D.buy]||0) + 1);   // moja świeża akcja zawsze bije to, co widziałem
+    DB.set('bts',BTS); save(); renderShop(); return; }
+  if(D.clear){ Object.keys(BOUGHT).forEach(p=>BTS[p]=Math.max(teraz(),(BTS[p]||0)+1)); BOUGHT = {}; DB.set('bts',BTS); save(); renderShop(); return; }
   if(D.share){ shareList(); return; }
   if(D.new){ openEditor(); return; }
   if(D.fr){ renderFridge(); return; }
   if(D.mam){ const potrzeba = buildList().need[D.mam] || 0;
-    PANTRY[D.mam] = Math.max(PANTRY[D.mam]||0, potrzeba); save(); renderShop();
+    PANTRY[D.mam] = Math.max(PANTRY[D.mam]||0, potrzeba); znacz('pantry',D.mam); save(); renderShop();
     toast(esc(P[D.mam].n)+' → spiżarnia'); return; }
-  if(D.prm){ delete PANTRY[D.prm]; save(); renderFridge(); return; }
+  if(D.prm){ delete PANTRY[D.prm]; znacz('pantry',D.prm); save(); renderFridge(); return; }
   if(D.padd2){ const pid=$('#pAdd').value, q=+$('#pAddQ').value||0;
     if(q<=0){ toast('Wpisz ile masz'); return; }
-    PANTRY[pid]=(PANTRY[pid]||0)+q; save(); renderFridge(); toast('Dodane do spiżarni'); return; }
+    PANTRY[pid]=(PANTRY[pid]||0)+q; znacz('pantry',pid); save(); renderFridge(); toast('Dodane do spiżarni'); return; }
   if(D.psave2){ document.querySelectorAll('[data-pq]').forEach(i=>{
-      const v=+i.value||0; if(v>0) PANTRY[i.dataset.pq]=v; else delete PANTRY[i.dataset.pq]; });
+      const v=+i.value||0; if(v>0) PANTRY[i.dataset.pq]=v; else delete PANTRY[i.dataset.pq]; znacz('pantry', i.dataset.pq); });
     save(); renderFridge(); toast('Zapisane ✓'); return; }
   if(D.close){ closeSheet(); return; }
 
   if(D.setmul){ sheetMul = +D.setmul; drawRecipe($('#sheet')._rec); return; }
   if(D.plate){ plateMode = D.plate; save(); drawRecipe($('#sheet')._rec); return; }
-  if(D.savemul){ PLAN[sheetKey].mul = sheetMul; save(); closeSheet(); renderPlan(); toast('Zapisane'); return; }
-  if(D.set){ const [k,id] = D.set.split('~'); PLAN[k] = {r:id, mul:1, on:true}; save(); closeSheet(); renderPlan(); return; }
+  if(D.savemul){ if(!PLAN[sheetKey]){ closeSheet(); renderPlan(); toast('Ten dzień już się zmienił'); return; }
+    PLAN[sheetKey].mul = sheetMul; znacz('plan',sheetKey); save(); closeSheet(); renderPlan(); toast('Zapisane'); return; }
+  if(D.set){ const [k,id] = D.set.split('~'); PLAN[k] = {r:id, mul:1, on:true}; znacz('plan',k); save(); closeSheet(); renderPlan(); return; }
   if(D.addplan){ closeSheet(); /* praca offline — działa tylko przy otwarciu z adresu, nie z pliku */
 if('serviceWorker' in navigator && location.protocol.indexOf('http')===0){
   navigator.serviceWorker.register('./sw.js').catch(()=>{});
@@ -1677,14 +1862,22 @@ go('plan'); toast('Wybierz miejsce w planie i dotknij „wybierz danie”'); ret
     S.pairCode = SY.pair; DB.set('sync',SY); save(); startSync(); openSync(); toast('Ustawione ✓'); return;
   }
   if(D.obniz){
+    let zmieniono = false;
     D.obniz.split(',').forEach(w=>{
       const duze = w==='him' ? 'him' : 'her';
-      S[duze+'Def'] = (S[duze+'Def']||0) + 150;
       const c = policzCele(w);
-      if(c && c.kg) S[duze+'Kcal'] = Math.max(c.cel, c.dol);
+      const dol = c ? c.dol : (duze==='him' ? 1500 : 1200);
+      /* obniżamy FAKTYCZNY cel o 150, a deficyt dostrajamy do niego —
+         wcześniej kod przeliczał cel od nowa ze wzoru i potrafił go podnieść */
+      const nowy = Math.max(dol, (S[duze+'Kcal']||0) - 150);
+      /* nigdy nie PODNOSIMY celu pod hasłem obniżki — jeśli cel jest już na
+         bezpiecznym minimum albo pod nim, zostawiamy go w spokoju */
+      if(nowy >= (S[duze+'Kcal']||0)){ toast('Cel jest już na bezpiecznym minimum — niżej nie zejdę'); return; }
+      if(c && c.tdee) S[duze+'Def'] = Math.max(0, c.tdee - nowy);
+      S[duze+'Kcal'] = nowy; zmieniono = true;
     });
     S.lastAsk = iso(new Date()); save(); renderWeight();
-    toast('Cel obniżony. Dajcie temu tydzień i zobaczymy.');
+    if(zmieniono) toast('Cel obniżony. Dajcie temu tydzień i zobaczymy.');
     return;
   }
   if(D.czekaj){ S.lastAsk = iso(new Date()); save(); renderWeight(); toast('Ok, wracamy do tego za tydzień'); return; }
@@ -1713,24 +1906,31 @@ go('plan'); toast('Wybierz miejsce w planie i dotknij „wybierz danie”'); ret
     return;
   }
   if(D.tr){ const [dd,kk] = D.tr.split('~'); TRAIN[dd] = TRAIN[dd] || {};
-    TRAIN[dd][kk] = !TRAIN[dd][kk]; save(); renderPlan(); return; }
+    TRAIN[dd][kk] = !TRAIN[dd][kk]; znacz('train',dd); save(); renderPlan(); return; }
   if(D.jem){ openJedzenie(); return; }
   if(D.ate){ const [sk,kk] = D.ate.split('~'); const dk = dayKey(dayIdx);
     const w = kk==='h' ? 'him' : 'her'; const dz = dziennik(dk);
-    dz[w].slots[sk] = !dz[w].slots[sk]; save(); renderPlan(); openJedzenie(); return; }
+    if(dz[w].slots[sk]){ dz[w].slots[sk] = false; }
+    else {
+      const e = PLAN[dk+'|'+sk], rec = e && recById2(e.r);
+      if(rec){ const t = recipeTotals(rec,1), u = w==='him' ? shareDnia(dk) : 1-shareDnia(dk);
+        dz[w].slots[sk] = {kcal: r0(t.kcal*u), b: r0(t.b*u)}; }
+      else dz[w].slots[sk] = true;
+    }
+    znacz('eaten', dk+'|'+w); save(); renderPlan(); openJedzenie(); return; }
   if(D.exadd){ const n=$('#exN').value.trim(), k=+$('#exK').value||0, bb=+$('#exB').value||0;
     if(!n || !k){ toast('Wpisz nazwę i kalorie'); return; }
-    dziennik(dayKey(dayIdx))[D.exadd].extra.push({n, k, b:bb}); save(); renderPlan(); openJedzenie(); return; }
+    dziennik(dayKey(dayIdx))[D.exadd].extra.push({id:'e'+teraz()+Math.random().toString(36).slice(2,5), n, k, b:bb}); znacz('eaten', dayKey(dayIdx)+'|'+D.exadd); save(); renderPlan(); openJedzenie(); return; }
   if(D.exrm){ const [w,i] = D.exrm.split('~');
-    dziennik(dayKey(dayIdx))[w].extra.splice(+i,1); save(); renderPlan(); openJedzenie(); return; }
+    dziennik(dayKey(dayIdx))[w].extra.splice(+i,1); znacz('eaten', dayKey(dayIdx)+'|'+w); save(); renderPlan(); openJedzenie(); return; }
   if(D.auto){ openAuto(); return; }
   if(D.optb){ autoOpt.batch = !autoOpt.batch; openAuto(); return; }
   if(D.optq){ autoOpt.quick = !autoOpt.quick; openAuto(); return; }
   if(D.autorun){ const r = generatePlan(S.days); closeSheet(); dayIdx=0; renderPlan();
     toast(`Gotowe: średnio ${r.k} kcal i ${r.b} g białka dziennie na Was dwoje`); return; }
   if(D.msgadd){ const t=$('#msgT').value.trim(); if(!t){ toast('Napisz coś najpierw'); return; }
-    MSGS.push({t, d: iso(new Date()).split('-').reverse().join('.')}); DB.set('msgs',MSGS); save(); openMsgs(); toast('Zapisane ✓'); return; }
-  if(D.msgdel){ const m=MSGS[+D.msgdel]; if(m) MSGDEL.push(m.d+'|'+m.t); MSGS.splice(+D.msgdel,1); DB.set('msgs',MSGS); DB.set('msgdel',MSGDEL); save(); openMsgs(); return; }
+    MSGS.push({id:'m'+teraz()+Math.random().toString(36).slice(2,6), t, d: iso(new Date()).split('-').reverse().join('.')}); DB.set('msgs',MSGS); save(); openMsgs(); toast('Zapisane ✓'); return; }
+  if(D.msgdel){ const m=MSGS[+D.msgdel]; if(m) MSGDEL.push(m.id || (m.d+'|'+m.t)); MSGS.splice(+D.msgdel,1); DB.set('msgs',MSGS); DB.set('msgdel',MSGDEL); save(); openMsgs(); return; }
   if(D.msgmail){
     const txt = MSGS.map((m,i)=>(i+1)+'. '+m.t+'  ('+m.d+')').join('\n');
     let tresc = 'Uwagi i pomysły do apki Nasza Kuchnia:\n\n' + txt +
@@ -1752,12 +1952,14 @@ go('plan'); toast('Wybierz miejsce w planie i dotknij „wybierz danie”'); ret
     else if(navigator.clipboard){ navigator.clipboard.writeText(txt); toast('Skopiowane ✓'); }
     return; }
   if(D.wsave){ saveWeight(); return; }
-  if(D.demo){ demoWeight(); return; }
+  if(D.demo){
+    const ile = Object.keys(WEIGHT).length;
+    if(ile && !confirm('Masz zapisane '+ile+' pomiarów. Przykładowe dane NADPISZĄ ostatnie 28 dni i tego nie da się cofnąć. Na pewno?')) return;
+    demoWeight(); return; }
 });
 
-function findKey(recId){
-  return Object.keys(PLAN).find(k=>PLAN[k] && PLAN[k].r===recId) || null;
-}
+/* dawniej: findKey szukał PIERWSZEGO dnia z tym przepisem, więc „zapisz ×3”
+   z przepiśnika zmieniało przypadkowy dzień. Teraz slot podaje sam przycisk. */
 
 function readEditor(){
   document.querySelectorAll('[data-ip]').forEach(s=>{ edIng[+s.dataset.ip][0] = s.value; });
@@ -1776,7 +1978,7 @@ function saveRecipe(){
   const n = $('#eN').value.trim();
   if(!n){ toast('Wpisz nazwę przepisu'); return; }
   const rec = {
-    id: edId || ('c'+Date.now()), custom:true, n,
+    id: edId || ('c'+Date.now()), custom:true, ts: teraz(), n,
     em: $('#eE').value.trim()||'🍽️',
     t: +$('#eT').value||20,
     typ: [$('#eTyp').value],
@@ -1794,8 +1996,15 @@ function saveRecipe(){
 function saveProduct(){
   const n = $('#pN').value.trim(); if(!n){ toast('Wpisz nazwę'); return; }
   const id = 'p'+Date.now();
-  MYP[id] = {n, a:$('#pA').value, u:$('#pU').value, kcal:+$('#pK').value||0,
-             pack:+$('#pP').value||null, gram:+$('#pG').value||null};
+  const jedn = $('#pU').value, gram = +$('#pG').value || null;
+  if(jedn==='szt' && !gram){ toast('Przy sztukach podaj wagę jednej sztuki'); return; }
+  MYP[id] = {n, a:$('#pA').value, u:jedn, kcal:+$('#pK').value||0,
+             b:+$('#pB').value||0, t:+$('#pT').value||0, w:+$('#pW').value||0,
+             pack:+$('#pP').value||null, gram};
+  /* ostrzeżenie, gdy makro nie zgadza się z kaloriami — łatwo o literówkę */
+  const zMakro = (MYP[id].b*4 + MYP[id].t*9 + MYP[id].w*4);
+  if(MYP[id].kcal && zMakro && Math.abs(zMakro - MYP[id].kcal)/MYP[id].kcal > 0.25)
+    setTimeout(()=>toast('Uwaga: z makro wychodzi ~'+r0(zMakro)+' kcal, a wpisałeś '+MYP[id].kcal), 900);
   P[id] = MYP[id]; DB.set('myprod', MYP); save();
   edIng.push([id, 100]);
   drawEditor(); toast('Produkt dodany ✓');
@@ -1819,7 +2028,12 @@ function saveWeight(){
   const g = id => { const x = $(id).value; return x==='' ? undefined : +x; };
   v.him = g('#wHim'); v.her = g('#wHer'); v.waistHim = g('#pHim'); v.waistHer = g('#pHer');
   if(v.him===undefined && v.her===undefined){ toast('Wpisz choć jedną wagę'); return; }
-  WEIGHT[d] = v; save(); renderWeight(); toast('Pomiar zapisany ✓');
+  /* dopisujemy do istniejącego wpisu — puste pole nie kasuje pomiaru partnera */
+  const stare = WEIGHT[d] || {};
+  Object.keys(v).forEach(k=>{ if(v[k]===undefined) delete v[k]; });
+  WEIGHT[d] = Object.assign({}, stare, v);
+  znacz('weight', d);
+  save(); renderWeight(); toast('Pomiar zapisany ✓');
 }
 function demoWeight(){
   const base = {him:92.4, her:68.1};
@@ -1832,11 +2046,19 @@ function demoWeight(){
 }
 function shareList(){
   const {need} = buildList(); const out = [];
+  /* to samo odjęcie spiżarni, co na ekranie — wcześniej SMS zawierał pełne
+     ilości, więc w sklepie kupowaliście to, co już mieliście w domu */
+  const doKup = {};
+  Object.keys(need).forEach(pid=>{ const brak = need[pid] - (PANTRY[pid]||0); if(brak > 0.001) doKup[pid] = brak; });
   AISLES.forEach(([ak,an])=>{
-    const inA = Object.keys(need).filter(i=>P[i].a===ak);
+    const inA = Object.keys(doKup).filter(i=>P[i] && P[i].a===ak);
     if(!inA.length) return;
     out.push('— '+an+' —');
-    inA.forEach(pid=>out.push('• '+P[pid].n+' — '+fmtQ(pid,need[pid])));
+    inA.forEach(pid=>{
+      const p = P[pid];
+      const opak = p.pack ? '  ('+Math.ceil(doKup[pid]/p.pack)+' × '+fmtQ(pid,p.pack)+')' : '';
+      out.push('• '+p.n+' — '+fmtQ(pid,doKup[pid])+opak);
+    });
   });
   const txt = 'Lista zakupów:\n'+out.join('\n');
   if(navigator.share) navigator.share({text:txt}).catch(()=>{});
