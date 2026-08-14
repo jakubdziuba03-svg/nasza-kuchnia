@@ -392,6 +392,35 @@ const dayDate = i => { const d = new Date(); d.setDate(d.getDate()+i); return d;
 const iso = d => d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
 const DNI = ['ndz','pon','wt','śr','czw','pt','sob'];
 const dayLabel = i => i===0 ? 'Dziś' : i===1 ? 'Jutro' : DNI[dayDate(i).getDay()];
+const dayKey = i => iso(dayDate(i));          // plan trzymamy pod datą, nie pod numerem dnia
+
+/* Jednorazowe przeniesienie starych wpisów (klucze "0-obiad") na daty.
+   Bez tego plan przesuwałby się o dzień po każdej północy. */
+function migracjaNaDaty(){
+  if(DB.get('migracjaDat', false)) return;
+  const nowyPlan = {}, nowyTrain = {};
+  Object.entries(PLAN).forEach(([k,v])=>{
+    const m = k.match(/^(\d+)-(.+)$/);
+    nowyPlan[m ? dayKey(+m[1])+'|'+m[2] : k] = v;
+  });
+  Object.entries(TRAIN).forEach(([k,v])=>{
+    nowyTrain[/^\d+$/.test(k) ? dayKey(+k) : k] = v;
+  });
+  PLAN = nowyPlan; TRAIN = nowyTrain;
+  DB.set('plan',PLAN); DB.set('train',TRAIN); DB.set('migracjaDat', true);
+}
+
+/* Sprzątanie: dania i treningi z dni, które już minęły, znikają z planu
+   (i przestają zawyżać listę zakupów). */
+function sprzatnijPrzeszlosc(){
+  const dzis = iso(new Date());
+  let zmiana = false;
+  Object.keys(PLAN).forEach(k=>{ const d = k.split('|')[0];
+    if(/^\d{4}-\d{2}-\d{2}$/.test(d) && d < dzis){ delete PLAN[k]; zmiana = true; } });
+  Object.keys(TRAIN).forEach(k=>{
+    if(/^\d{4}-\d{2}-\d{2}$/.test(k) && k < dzis){ delete TRAIN[k]; zmiana = true; } });
+  if(zmiana){ DB.set('plan',PLAN); DB.set('train',TRAIN); }
+}
 function toast(msg){ const t=$('#toast'); t.textContent=msg; t.classList.add('on'); clearTimeout(t._h); t._h=setTimeout(()=>t.classList.remove('on'),1900); }
 
 /* ---------- zapotrzebowanie kaloryczne ----------
@@ -435,7 +464,7 @@ function celDnia(who, day){
 
 /* udział On / Ona w każdym daniu, liczony z celów kalorycznych */
 const shareHim = () => {
-  const h = celDnia('him', dayIdx), r = celDnia('her', dayIdx);
+  const h = celDnia('him', dayKey(dayIdx)), r = celDnia('her', dayKey(dayIdx));
   return (h+r) ? h/(h+r) : 0.5;
 };
 
@@ -482,7 +511,7 @@ function renderPlan(){
   /* karta dnia */
   d.push('<div class="card">');
   SLOTS.forEach(([sk,sn])=>{
-    const key = dayIdx+'-'+sk, e = PLAN[key], rec = e && recById2(e.r);
+    const key = dayKey(dayIdx)+'|'+sk, e = PLAN[key], rec = e && recById2(e.r);
     d.push('<div class="slot"><div class="slot-h">'+sn+'</div><div class="meal">');
     if(rec){
       const t = recipeTotals(rec, 1);
@@ -501,14 +530,14 @@ function renderPlan(){
 
   /* trening tego dnia */
   d.push('<div class="card tight"><div class="between"><div><b style="font-size:14px">🏋️ Trening tego dnia</b><div class="tiny">Dzień treningowy dokłada '+(S.trainBoost||0)+'% kalorii</div></div><div class="row" style="gap:7px">');
-  d.push(`<button class="trchip ${trenuje(dayIdx,'him')?'on him':''}" data-tr="${dayIdx}|h">${esc(S.himName)}</button>`);
-  d.push(`<button class="trchip ${trenuje(dayIdx,'her')?'on her':''}" data-tr="${dayIdx}|r">${esc(S.herName)}</button>`);
+  d.push(`<button class="trchip ${trenuje(dayKey(dayIdx),'him')?'on him':''}" data-tr="${dayKey(dayIdx)}~h">${esc(S.himName)}</button>`);
+  d.push(`<button class="trchip ${trenuje(dayKey(dayIdx),'her')?'on her':''}" data-tr="${dayKey(dayIdx)}~r">${esc(S.herName)}</button>`);
   d.push('</div></div></div>');
 
   /* podsumowanie dnia */
   let kHim=0,kHer=0,bHim=0,bHer=0;
   SLOTS.forEach(([sk])=>{
-    const e = PLAN[dayIdx+'-'+sk]; if(!e) return;
+    const e = PLAN[dayKey(dayIdx)+'|'+sk]; if(!e) return;
     const rec = recById2(e.r); if(!rec) return;
     const t = recipeTotals(rec, 1), sh = shareHim();
     kHim += t.kcal*sh; kHer += t.kcal*(1-sh);
@@ -525,8 +554,8 @@ function renderPlan(){
       <div class="pv2">${r0(b)} <small>/ ${bg} g białka</small></div>${bar(b,bg,c)}
     </div>`;
   d.push('<div class="card"><div class="pgrid">');
-  d.push(col(S.himName, kHim, celDnia('him',dayIdx), bHim, S.himProt, 'var(--him)'));
-  d.push(col(S.herName, kHer, celDnia('her',dayIdx), bHer, S.herProt, 'var(--her)'));
+  d.push(col(S.himName, kHim, celDnia('him',dayKey(dayIdx)), bHim, S.himProt, 'var(--him)'));
+  d.push(col(S.herName, kHer, celDnia('her',dayKey(dayIdx)), bHer, S.herProt, 'var(--her)'));
   d.push('</div></div>');
 
   const cnt = Object.values(PLAN).filter(e=>e && e.on!==false).length;
@@ -889,14 +918,14 @@ function drawRecipe(rec){
 
 /* --- wybór dania do slotu --- */
 function openPicker(key){
-  const slot = key.split('-')[1];
+  const slot = key.split('|')[1];
   const pref = ALL().filter(r=>(r.typ||[]).includes(slot)), rest = ALL().filter(r=>!(r.typ||[]).includes(slot));
   const d = [`<div class="sheet-h"><h3>Wybierz danie</h3><button class="icobtn" data-close="1">✕</button></div>`];
   const put = (arr,label) => {
     if(!arr.length) return;
     d.push('<h2>'+label+'</h2><div class="rlist">');
     arr.forEach(r=>{ const t=recipeTotals(r);
-      d.push(`<button class="ritem" data-set="${key}|${r.id}"><span class="em">${r.em||'🍽️'}</span>
+      d.push(`<button class="ritem" data-set="${key}~${r.id}"><span class="em">${r.em||'🍽️'}</span>
         <span class="nm"><b>${esc(r.n)}</b><span>${t.kcal} kcal na dwoje • ${r.t||15} min</span></span></button>`); });
     d.push('</div>');
   };
@@ -1032,9 +1061,9 @@ function generatePlan(n){
       const rec = day[sk]; if(!rec) return;
       if(sk==='obiad'){
         const blk = day._blk, first = (d === blk.from);
-        PLAN[d+'-obiad'] = {r:rec.id, mul: first ? blk.len : 1, on: first};
+        PLAN[dayKey(d)+'|obiad'] = {r:rec.id, mul: first ? blk.len : 1, on: first};
       } else {
-        PLAN[d+'-'+sk] = {r:rec.id, mul:1, on:true};
+        PLAN[dayKey(d)+'|'+sk] = {r:rec.id, mul:1, on:true};
       }
     });
   });
@@ -1332,7 +1361,7 @@ async function startSync(){
   connectWS(); startPolling();
 }
 if(SY.on) setTimeout(startSync, 300);
-document.addEventListener('visibilitychange', ()=>{ if(!document.hidden && SY.on){ syncPull(); pushPresence(); } });
+document.addEventListener('visibilitychange', ()=>{ if(!document.hidden){ sprzatnijPrzeszlosc(); if(tab==='plan') renderPlan(); if(SY.on){ syncPull(); pushPresence(); } } });
 
 /* --- para w sklepie --- */
 const STAT = {
@@ -1436,7 +1465,7 @@ document.addEventListener('click', e => {
   if(D.setmul){ sheetMul = +D.setmul; drawRecipe($('#sheet')._rec); return; }
   if(D.plate){ plateMode = D.plate; save(); drawRecipe($('#sheet')._rec); return; }
   if(D.savemul){ PLAN[sheetKey].mul = sheetMul; save(); closeSheet(); renderPlan(); toast('Zapisane'); return; }
-  if(D.set){ const [k,id] = D.set.split('|'); PLAN[k] = {r:id, mul:1, on:true}; save(); closeSheet(); renderPlan(); return; }
+  if(D.set){ const [k,id] = D.set.split('~'); PLAN[k] = {r:id, mul:1, on:true}; save(); closeSheet(); renderPlan(); return; }
   if(D.addplan){ closeSheet(); /* praca offline — działa tylko przy otwarciu z adresu, nie z pliku */
 if('serviceWorker' in navigator && location.protocol.indexOf('http')===0){
   navigator.serviceWorker.register('./sw.js').catch(()=>{});
@@ -1519,7 +1548,7 @@ go('plan'); toast('Wybierz miejsce w planie i dotknij „wybierz danie”'); ret
     toast(ostrzez ? 'Zapisane, ale cel podniosłem do bezpiecznego minimum' : 'Cele przeliczone ✓');
     return;
   }
-  if(D.tr){ const [dd,kk] = D.tr.split('|'); TRAIN[dd] = TRAIN[dd] || {};
+  if(D.tr){ const [dd,kk] = D.tr.split('~'); TRAIN[dd] = TRAIN[dd] || {};
     TRAIN[dd][kk] = !TRAIN[dd][kk]; save(); renderPlan(); return; }
   if(D.auto){ openAuto(); return; }
   if(D.optb){ autoOpt.batch = !autoOpt.batch; openAuto(); return; }
@@ -1665,11 +1694,14 @@ window.addEventListener('resize', ()=>{ if(tab==='weight'){ const r=weightRows()
 function renderAll(){ go(tab); }
 
 /* przykładowy plan przy pierwszym uruchomieniu */
+migracjaNaDaty();
+sprzatnijPrzeszlosc();
+
 if(!Object.keys(PLAN).length){
   PLAN = {
-    '0-sniadanie':{r:'r1',mul:1,on:true}, '0-obiad':{r:'r2',mul:2,on:true}, '0-kolacja':{r:'r8',mul:1,on:true},
-    '1-sniadanie':{r:'r3',mul:1,on:true}, '1-obiad':{r:'r2',mul:1,on:false}, '1-kolacja':{r:'r5',mul:1,on:true},
-    '2-sniadanie':{r:'r12',mul:1,on:true},'2-obiad':{r:'r9',mul:1,on:true}, '2-przekaska':{r:'r11',mul:1,on:true}
+    [dayKey(0)+'|sniadanie']:{r:'r1',mul:1,on:true}, [dayKey(0)+'|obiad']:{r:'r2',mul:2,on:true}, [dayKey(0)+'|kolacja']:{r:'r8',mul:1,on:true},
+    [dayKey(1)+'|sniadanie']:{r:'r3',mul:1,on:true}, [dayKey(1)+'|obiad']:{r:'r2',mul:1,on:false}, [dayKey(1)+'|kolacja']:{r:'r5',mul:1,on:true},
+    [dayKey(2)+'|sniadanie']:{r:'r12',mul:1,on:true},[dayKey(2)+'|obiad']:{r:'r9',mul:1,on:true}, [dayKey(2)+'|przekaska']:{r:'r11',mul:1,on:true}
   };
   save();
 }
