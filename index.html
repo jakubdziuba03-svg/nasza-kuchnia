@@ -378,10 +378,12 @@ let S = Object.assign({}, DEF_SET, DB.get('set', {}));
 let PLAN   = DB.get('plan', {});      // { "0-obiad": {r:'r2', mul:1} }
 let BOUGHT = DB.get('bought', {});    // { productId: true }
 let WEIGHT = DB.get('weight', {});
-let TRAIN  = DB.get('train', {});     // { "0": {h:true, r:false} }    // { "2026-08-14": {him:.., her:.., waistHim:.., waistHer:..} }
+let TRAIN  = DB.get('train', {});
+let PANTRY = DB.get('pantry', {});   // { produkt: ile mamy w domu }
+let EATEN  = DB.get('eaten', {});    // { data: { him:{slots:{},extra:[]}, her:{...} } }     // { "0": {h:true, r:false} }    // { "2026-08-14": {him:.., her:.., waistHim:.., waistHer:..} }
 let tab = 'plan', dayIdx = 0, plateMode = DB.get('plateMode','g');
 
-const save = () => { DB.set('set',S); DB.set('plan',PLAN); DB.set('bought',BOUGHT); DB.set('weight',WEIGHT); DB.set('train',TRAIN); DB.set('plateMode',plateMode); if(typeof schedulePush==='function') schedulePush(); };
+const save = () => { DB.set('set',S); DB.set('plan',PLAN); DB.set('bought',BOUGHT); DB.set('weight',WEIGHT); DB.set('train',TRAIN); DB.set('pantry',PANTRY); DB.set('eaten',EATEN); DB.set('plateMode',plateMode); if(typeof schedulePush==='function') schedulePush(); };
 
 /* --- 6. DROBNE POMOCNIKI --- */
 const $  = s => document.querySelector(s);
@@ -419,7 +421,9 @@ function sprzatnijPrzeszlosc(){
     if(/^\d{4}-\d{2}-\d{2}$/.test(d) && d < dzis){ delete PLAN[k]; zmiana = true; } });
   Object.keys(TRAIN).forEach(k=>{
     if(/^\d{4}-\d{2}-\d{2}$/.test(k) && k < dzis){ delete TRAIN[k]; zmiana = true; } });
-  if(zmiana){ DB.set('plan',PLAN); DB.set('train',TRAIN); }
+  const granica = iso(new Date(Date.now() - 60*864e5));
+  Object.keys(EATEN).forEach(k=>{ if(k < granica){ delete EATEN[k]; zmiana = true; } });
+  if(zmiana){ DB.set('plan',PLAN); DB.set('train',TRAIN); DB.set('eaten',EATEN); }
 }
 function toast(msg){ const t=$('#toast'); t.textContent=msg; t.classList.add('on'); clearTimeout(t._h); t._h=setTimeout(()=>t.classList.remove('on'),1900); }
 
@@ -461,6 +465,31 @@ function celDnia(who, day){
   const baza = who==='him' ? S.himKcal : S.herKcal;
   return r0(baza * (trenuje(day, who) ? 1 + (S.trainBoost||0)/100 : 1));
 }
+
+/* ---------- co faktycznie zjedzone ---------- */
+function dziennik(dk){
+  EATEN[dk] = EATEN[dk] || {};
+  ['him','her'].forEach(w=>{ EATEN[dk][w] = EATEN[dk][w] || {slots:{}, extra:[]}; });
+  return EATEN[dk];
+}
+function zjedzone(dk, who){
+  const dz = dziennik(dk)[who];
+  let kcal = 0, b = 0;
+  SLOTS.forEach(([sk])=>{
+    if(!dz.slots[sk]) return;
+    const e = PLAN[dk+'|'+sk]; if(!e) return;
+    const rec = recById2(e.r); if(!rec) return;
+    const t = recipeTotals(rec, 1);
+    const udzial = who==='him' ? shareDnia(dk) : 1-shareDnia(dk);
+    kcal += t.kcal*udzial; b += t.b*udzial;
+  });
+  (dz.extra||[]).forEach(x=>{ kcal += (+x.k||0); b += (+x.b||0); });
+  return {kcal:r0(kcal), b:r0(b), cokolwiek: Object.values(dz.slots).some(Boolean) || (dz.extra||[]).length>0};
+}
+const shareDnia = dk => {
+  const h = celDnia('him', dk), r = celDnia('her', dk);
+  return (h+r) ? h/(h+r) : 0.5;
+};
 
 /* udział On / Ona w każdym daniu, liczony z celów kalorycznych */
 const shareHim = () => {
@@ -558,7 +587,15 @@ function renderPlan(){
   d.push(col(S.herName, kHer, celDnia('her',dayKey(dayIdx)), bHer, S.herProt, 'var(--her)'));
   d.push('</div></div>');
 
+  const zh = zjedzone(dayKey(dayIdx),'him'), zr = zjedzone(dayKey(dayIdx),'her');
+  if(zh.cokolwiek || zr.cokolwiek){
+    d.push('<div class="card tight"><div class="tiny" style="margin-bottom:6px"><b>Faktycznie zjedzone</b></div><div class="pgrid">');
+    d.push(`<div class="pcol"><div class="pnm" style="color:var(--him)">${esc(S.himName)}</div><div class="pv">${zh.kcal} <small>kcal • ${zh.b} g B</small></div></div>`);
+    d.push(`<div class="pcol"><div class="pnm" style="color:var(--her)">${esc(S.herName)}</div><div class="pv">${zr.kcal} <small>kcal • ${zr.b} g B</small></div></div>`);
+    d.push('</div></div>');
+  }
   const cnt = Object.values(PLAN).filter(e=>e && e.on!==false).length;
+  d.push('<button class="btn ghost wide" data-jem="1" style="margin-bottom:9px">🍽️ Co zjedliście?</button>');
   d.push('<button class="btn ghost wide" data-auto="1" style="margin-bottom:9px">✨ Ułóż plan automatycznie</button>');
   d.push(`<button class="btn wide" data-go="shop">🛒 Zrób listę zakupów (${cnt} dań)</button>`);
   d.push('<p class="tiny" style="margin-top:10px">Ptaszek = danie wchodzi na listę zakupów. Przycisk ×1 to gotowanie na zapas — podwaja lub potraja składniki.</p>');
@@ -586,11 +623,24 @@ function buildList(){
 
 function renderShop(){
   const {need, from} = buildList();
-  const ids = Object.keys(need);
+  const wszystkie = Object.keys(need);
+  /* to, co mamy w domu, odejmujemy od potrzebnej ilości */
+  const doKupienia = {}, wDomu = [];
+  wszystkie.forEach(pid=>{
+    const zapas = PANTRY[pid] || 0;
+    const brak = need[pid] - zapas;
+    if(brak > 0.001) doKupienia[pid] = brak; else wDomu.push(pid);
+  });
+  const ids = Object.keys(doKupienia);
   const d = [];
 
-  if(!ids.length){
+  if(!wszystkie.length){
     $('#s-shop').innerHTML = '<div class="empty"><span class="em">🛒</span>Nic jeszcze nie zaznaczone.<br>Wejdź w Plan i zaznacz ptaszkami dania.</div>';
+    return;
+  }
+  if(!ids.length){
+    $('#s-shop').innerHTML = '<div class="ok" style="margin-bottom:12px"><b>Nic nie musicie kupować.</b><br>Wszystko na te dni macie już w spiżarni.</div>'
+      + '<div class="card"><div class="tiny">' + wDomu.map(p=>esc(P[p].n)).join(' • ') + '</div></div>';
     return;
   }
 
@@ -603,7 +653,7 @@ function renderShop(){
   const warns = [];
   ids.forEach(pid=>{
     const p = P[pid]; if(!p.pack || !p.o) return;
-    const packs = Math.ceil(need[pid]/p.pack), rest = packs*p.pack - need[pid];
+    const packs = Math.ceil(doKupienia[pid]/p.pack), rest = packs*p.pack - doKupienia[pid];
     if(rest >= p.pack*0.34){
       const alt = ALL().filter(r => r.ing.some(([x])=>x===pid) && !from[pid].includes(r.n));
       warns.push({pid, rest, alt: alt[0]});
@@ -625,7 +675,7 @@ function renderShop(){
     if(!inA.length) return;
     d.push(`<div class="aisle-h"><span>${ae} ${an}</span></div><div class="card">`);
     inA.forEach(pid=>{
-      const p = P[pid], q = need[pid];
+      const p = P[pid], q = doKupienia[pid];
       let packInfo = '';
       if(p.pack){
         const packs = Math.ceil(q/p.pack), rest = packs*p.pack - q;
@@ -634,11 +684,20 @@ function renderShop(){
       d.push(`<div class="item ${BOUGHT[pid]?'done':''}" data-buy="${pid}">
         <button class="chk ${BOUGHT[pid]?'on':''}">✓</button>
         <div class="txt"><b>${esc(p.n)} — ${fmtQ(pid,q)}</b>${packInfo}
-        <div class="tiny" style="opacity:.75">${esc([...new Set(from[pid])].join(' + '))}</div></div></div>`);
+        <div class="tiny" style="opacity:.75">${esc([...new Set(from[pid])].join(' + '))}</div></div>
+        <button class="xmul" data-mam="${pid}" title="mam w domu">🥫</button></div>`);
     });
     d.push('</div>');
   });
 
+  if(wDomu.length){
+    d.push('<div class="aisle-h"><span>🥫 Macie w domu — nie kupujecie</span></div><div class="card">');
+    wDomu.forEach(pid=>{
+      d.push(`<div class="item"><div class="txt"><b style="font-weight:500">${esc(P[pid].n)}</b>
+        <div class="tiny">potrzeba ${fmtQ(pid,need[pid])}, w spiżarni ${fmtQ(pid,PANTRY[pid]||0)}</div></div></div>`);
+    });
+    d.push('</div>');
+  }
   d.push('<button class="btn ghost wide" data-share="1" style="margin-top:6px">📤 Wyślij listę (SMS / WhatsApp)</button>');
   $('#s-shop').innerHTML = d.join('');
 }
@@ -676,6 +735,25 @@ function renderFridge(){
   d.push('<div class="card"><label class="f"><span>Co zostało w lodówce?</span>');
   d.push(`<textarea id="frq" rows="3" placeholder="np. 2 jajka, pół passaty, ser żółty">${esc(fridgeTxt)}</textarea></label>`);
   d.push('<button class="btn wide" data-fr="1">Znajdź co z tego zjeść</button></div>');
+
+  /* --- spiżarnia --- */
+  const zapasy = Object.keys(PANTRY).filter(p=>P[p] && PANTRY[p]>0)
+                       .sort((a,b)=>P[a].n.localeCompare(P[b].n,'pl'));
+  d.push('<h2>🥫 Spiżarnia — co macie w domu</h2><div class="card">');
+  if(!zapasy.length) d.push('<div class="tiny" style="margin-bottom:10px">Pusto. Dopisz tu ryż, oliwę, przyprawy — cokolwiek stoi w szafce. Lista zakupów sama to odejmie.</div>');
+  zapasy.forEach(pid=>{
+    d.push(`<div class="row" style="margin-bottom:8px">
+      <span style="flex:1;font-size:14.5px">${esc(P[pid].n)}</span>
+      <input data-pq="${pid}" type="number" inputmode="decimal" value="${r1(PANTRY[pid])}" style="width:92px">
+      <span class="tiny" style="width:26px">${P[pid].u}</span>
+      <button class="icobtn" data-prm="${pid}" style="width:34px;height:34px;font-size:13px">✕</button></div>`);
+  });
+  d.push('<div class="row" style="gap:8px;margin-top:6px">');
+  d.push('<select id="pAdd" style="flex:1">' + prodOptions('ryz') + '</select>');
+  d.push('<input id="pAddQ" type="number" inputmode="decimal" placeholder="ile" style="width:88px">');
+  d.push('<button class="btn sm" data-padd2="1">Dodaj</button></div>');
+  if(zapasy.length) d.push('<button class="btn ghost sm" data-psave2="1" style="margin-top:10px">Zapisz ilości</button>');
+  d.push('</div>');
 
   const words = fridgeTxt.toLowerCase().split(/[,;\n]+|\si\s/).map(s=>s.trim()).filter(Boolean);
   if(words.length){
@@ -911,7 +989,10 @@ function drawRecipe(rec){
   }else{
     d.push('<button class="btn wide" data-addplan="'+rec.id+'">➕ Dodaj do planu</button>');
   }
-  if(rec.custom) d.push('<button class="btn ghost wide" data-delrec="'+rec.id+'" style="margin-top:8px">Usuń ten przepis</button>');
+  d.push('<div class="row" style="gap:8px;margin-top:8px">');
+  d.push('<button class="btn ghost sm" data-edrec="'+rec.id+'" style="flex:1">'+(rec.custom ? '✏️ Edytuj' : '✏️ Skopiuj i przerób')+'</button>');
+  if(rec.custom) d.push('<button class="btn ghost sm" data-delrec="'+rec.id+'">Usuń</button>');
+  d.push('</div>');
   openSheet(d.join(''));
   $('#sheet')._rec = rec;
 }
@@ -934,9 +1015,17 @@ function openPicker(key){
 }
 
 /* --- edytor własnego przepisu --- */
-let edIng = [], edSteps = ['',''];
-function openEditor(){
-  edIng = [['serek',200]]; edSteps = [''];
+let edIng = [], edSteps = [''], edId = null, edMeta = null;
+function openEditor(rec){
+  if(rec){
+    edId = rec.custom ? rec.id : null;         // moje przykładowe kopiujemy, nie nadpisujemy
+    edIng = rec.ing.map(x=>[x[0], x[1]]);
+    edSteps = rec.steps.slice(0,3);
+    edMeta = {n: rec.custom ? rec.n : rec.n + ' (nasza wersja)', em: rec.em||'🍽️',
+              t: rec.t||20, typ: (rec.typ||['obiad'])[0], pieces: rec.pieces||''};
+  } else {
+    edId = null; edIng = [['serek',200]]; edSteps = ['']; edMeta = null;
+  }
   drawEditor();
 }
 function prodOptions(sel){
@@ -944,13 +1033,17 @@ function prodOptions(sel){
     .map(p=>`<option value="${p}" ${p===sel?'selected':''}>${esc(P[p].n)}</option>`).join('');
 }
 function drawEditor(){
-  const d = [`<div class="sheet-h"><h3>Nowy przepis</h3><button class="icobtn" data-close="1">✕</button></div>`];
+  const m = edMeta || {n:'', em:'🍽️', t:20, typ:'obiad', pieces:''};
+  const tytul = edId ? 'Edytuj przepis' : (edMeta ? 'Nowy przepis na bazie istniejącego' : 'Nowy przepis');
+  const d = [`<div class="sheet-h"><h3>${tytul}</h3><button class="icobtn" data-close="1">✕</button></div>`];
   d.push('<div class="card">');
-  d.push('<div class="grid2"><label class="f"><span>Nazwa</span><input id="eN" placeholder="np. Placki z twarogu"></label>');
-  d.push('<label class="f"><span>Ikonka</span><input id="eE" value="🍽️" maxlength="4"></label></div>');
-  d.push('<div class="grid2"><label class="f"><span>Czas (min)</span><input id="eT" type="number" value="20" inputmode="numeric"></label>');
-  d.push('<label class="f"><span>Na ile kawałków (opcjonalnie)</span><input id="eP" type="number" placeholder="np. 8" inputmode="numeric"></label></div>');
-  d.push('<label class="f"><span>Kiedy jecie?</span><select id="eTyp"><option value="sniadanie">Śniadanie</option><option value="obiad" selected>Obiad</option><option value="kolacja">Kolacja</option><option value="przekaska">Przekąska</option></select></label>');
+  d.push(`<div class="grid2"><label class="f"><span>Nazwa</span><input id="eN" value="${esc(m.n)}" placeholder="np. Placki z twarogu"></label>`);
+  d.push(`<label class="f"><span>Ikonka</span><input id="eE" value="${esc(m.em)}" maxlength="4"></label></div>`);
+  d.push(`<div class="grid2"><label class="f"><span>Czas (min)</span><input id="eT" type="number" value="${m.t}" inputmode="numeric"></label>`);
+  d.push(`<label class="f"><span>Na ile kawałków (opcjonalnie)</span><input id="eP" type="number" value="${m.pieces}" placeholder="np. 8" inputmode="numeric"></label></div>`);
+  d.push('<label class="f"><span>Kiedy jecie?</span><select id="eTyp">' +
+    [['sniadanie','Śniadanie'],['obiad','Obiad'],['kolacja','Kolacja'],['przekaska','Przekąska']]
+      .map(([v,n])=>`<option value="${v}" ${m.typ===v?'selected':''}>${n}</option>`).join('') + '</select></label>');
   d.push('</div>');
 
   d.push('<h2>Składniki (cała gramatura na dwoje)</h2><div class="card">');
@@ -970,7 +1063,7 @@ function drawEditor(){
   edSteps.forEach((s,i)=>d.push(`<label class="f"><span>Krok ${i+1}</span><input data-st="${i}" value="${esc(s)}" placeholder="np. Zmiksuj spód i piecz 15 min"></label>`));
   if(edSteps.length<3) d.push('<button class="btn ghost sm" data-sadd="1">➕ Krok</button>');
   d.push('</div>');
-  d.push('<button class="btn wide" data-esave="1">Zapisz przepis</button>');
+  d.push('<button class="btn wide" data-esave="1">'+(edId ? 'Zapisz zmiany' : 'Zapisz przepis')+'</button>');
   openSheet(d.join(''));
 }
 
@@ -1110,6 +1203,64 @@ function openMsgs(){
   openSheet(d.join(''));
 }
 
+/* --- dziennik: co dziś zjedliście --- */
+function openJedzenie(){
+  const dk = dayKey(dayIdx), dz = dziennik(dk);
+  const d = [`<div class="sheet-h"><h3>🍽️ Co zjedliście — ${dayLabel(dayIdx).toLowerCase()}</h3><button class="icobtn" data-close="1">✕</button></div>`];
+
+  d.push('<div class="card"><div class="tiny" style="margin-bottom:9px">Zaznacz, kto co zjadł. Nieodhaczone dania nie liczą się do podsumowania.</div>');
+  let cos = false;
+  SLOTS.forEach(([sk,sn])=>{
+    const e = PLAN[dk+'|'+sk]; if(!e) return;
+    const rec = recById2(e.r); if(!rec) return;
+    cos = true;
+    const t = recipeTotals(rec,1), sh = shareDnia(dk);
+    d.push(`<div class="slot"><div class="slot-h">${sn}</div>
+      <div class="between"><div style="flex:1">
+        <b style="font-size:14.5px">${rec.em||'🍽️'} ${esc(rec.n)}</b>
+        <div class="tiny">${esc(S.himName)} ${r0(t.kcal*sh)} kcal • ${esc(S.herName)} ${t.kcal-r0(t.kcal*sh)} kcal</div>
+      </div><div class="row" style="gap:7px">
+        <button class="trchip ${dz.him.slots[sk]?'on him':''}" data-ate="${sk}~h">${esc(S.himName)}</button>
+        <button class="trchip ${dz.her.slots[sk]?'on her':''}" data-ate="${sk}~r">${esc(S.herName)}</button>
+      </div></div></div>`);
+  });
+  if(!cos) d.push('<div class="tiny">Na ten dzień nie ma jeszcze nic w planie.</div>');
+  d.push('</div>');
+
+  ['him','her'].forEach(w=>{
+    const lista = dziennik(dk)[w].extra || [];
+    if(!lista.length) return;
+    d.push(`<h2>Spoza planu — ${esc(w==='him'?S.himName:S.herName)}</h2><div class="card">`);
+    lista.forEach((x,i)=>{
+      d.push(`<div class="item"><div class="txt"><b style="font-weight:500">${esc(x.n)}</b>
+        <div class="tiny">${x.k} kcal • ${x.b||0} g białka</div></div>
+        <button class="icobtn" data-exrm="${w}~${i}" style="width:30px;height:30px;font-size:12px">✕</button></div>`);
+    });
+    d.push('</div>');
+  });
+
+  d.push('<h2>Dopisz coś spoza planu</h2><div class="card"><div class="grid2">');
+  d.push('<label class="f" style="grid-column:1/-1"><span>Co to było</span><input id="exN" placeholder="np. batonik w pracy"></label>');
+  d.push('<label class="f"><span>kcal</span><input id="exK" type="number" inputmode="numeric"></label>');
+  d.push('<label class="f"><span>białko (g)</span><input id="exB" type="number" inputmode="numeric"></label>');
+  d.push('</div><div class="row" style="gap:8px">');
+  d.push(`<button class="btn sm" data-exadd="him" style="flex:1">Dodaj dla ${esc(S.himName)}</button>`);
+  d.push(`<button class="btn sm" data-exadd="her" style="flex:1">Dodaj dla ${esc(S.herName)}</button>`);
+  d.push('</div></div>');
+
+  const zh = zjedzone(dk,'him'), zr = zjedzone(dk,'her');
+  d.push('<div class="card sum"><div class="pgrid">');
+  [[S.himName, zh, celDnia('him',dk), S.himProt, 'var(--him)'], [S.herName, zr, celDnia('her',dk), S.herProt, 'var(--her)']].forEach(([nm,z,cel,bcel,c])=>{
+    const zostalo = cel - z.kcal;
+    d.push(`<div class="pcol"><div class="pnm" style="color:${c}">${esc(nm)}</div>
+      <div class="pv">${z.kcal} <small>/ ${cel} kcal</small></div>
+      <div class="tiny" style="margin-top:3px">${zostalo>=0 ? 'zostało '+zostalo+' kcal' : 'ponad cel o '+(-zostalo)+' kcal'}</div>
+      <div class="pv2" style="margin-top:8px">${z.b} <small>/ ${bcel} g białka</small></div></div>`);
+  });
+  d.push('</div></div>');
+  openSheet(d.join(''));
+}
+
 /* --- kalkulator celów --- */
 function openCele(){
   const d = [`<div class="sheet-h"><h3>🎯 Kalkulator celów</h3><button class="icobtn" data-close="1">✕</button></div>`];
@@ -1224,6 +1375,8 @@ const DOCS = {
            set:v=>{ MYP = Object.assign({}, v||{}, MYP); Object.assign(P,MYP); DB.set('myprod',MYP); }},
   weight: {get:()=>WEIGHT,        set:v=>{ WEIGHT=v; DB.set('weight',WEIGHT); }},
   train:  {get:()=>TRAIN,         set:v=>{ TRAIN=v;  DB.set('train',TRAIN); }},
+  pantry: {get:()=>PANTRY,        set:v=>{ PANTRY=v; DB.set('pantry',PANTRY); }},
+  eaten:  {get:()=>EATEN,         set:v=>{ EATEN=v;  DB.set('eaten',EATEN); }},
   msgs:   {get:()=>({list:MSGS, del:MSGDEL}),
            set:v=>{
              const zdalne = Array.isArray(v) ? v : ((v&&v.list)||[]);
@@ -1460,6 +1613,16 @@ document.addEventListener('click', e => {
   if(D.share){ shareList(); return; }
   if(D.new){ openEditor(); return; }
   if(D.fr){ renderFridge(); return; }
+  if(D.mam){ const potrzeba = buildList().need[D.mam] || 0;
+    PANTRY[D.mam] = Math.max(PANTRY[D.mam]||0, potrzeba); save(); renderShop();
+    toast(esc(P[D.mam].n)+' → spiżarnia'); return; }
+  if(D.prm){ delete PANTRY[D.prm]; save(); renderFridge(); return; }
+  if(D.padd2){ const pid=$('#pAdd').value, q=+$('#pAddQ').value||0;
+    if(q<=0){ toast('Wpisz ile masz'); return; }
+    PANTRY[pid]=(PANTRY[pid]||0)+q; save(); renderFridge(); toast('Dodane do spiżarni'); return; }
+  if(D.psave2){ document.querySelectorAll('[data-pq]').forEach(i=>{
+      const v=+i.value||0; if(v>0) PANTRY[i.dataset.pq]=v; else delete PANTRY[i.dataset.pq]; });
+    save(); renderFridge(); toast('Zapisane ✓'); return; }
   if(D.close){ closeSheet(); return; }
 
   if(D.setmul){ sheetMul = +D.setmul; drawRecipe($('#sheet')._rec); return; }
@@ -1472,6 +1635,7 @@ if('serviceWorker' in navigator && location.protocol.indexOf('http')===0){
 }
 
 go('plan'); toast('Wybierz miejsce w planie i dotknij „wybierz danie”'); return; }
+  if(D.edrec){ const r0_ = recById2(D.edrec); if(r0_){ closeSheet(); openEditor(r0_); } return; }
   if(D.delrec){ CUSTOM = CUSTOM.filter(r=>r.id!==D.delrec); RECDEL.push(D.delrec); DB.set('myrec',CUSTOM); DB.set('recdel',RECDEL); save(); closeSheet(); renderRec(); return; }
 
   if(D.iadd){ readEditor(); edIng.push(['jajko',1]); drawEditor(); return; }
@@ -1550,6 +1714,15 @@ go('plan'); toast('Wybierz miejsce w planie i dotknij „wybierz danie”'); ret
   }
   if(D.tr){ const [dd,kk] = D.tr.split('~'); TRAIN[dd] = TRAIN[dd] || {};
     TRAIN[dd][kk] = !TRAIN[dd][kk]; save(); renderPlan(); return; }
+  if(D.jem){ openJedzenie(); return; }
+  if(D.ate){ const [sk,kk] = D.ate.split('~'); const dk = dayKey(dayIdx);
+    const w = kk==='h' ? 'him' : 'her'; const dz = dziennik(dk);
+    dz[w].slots[sk] = !dz[w].slots[sk]; save(); renderPlan(); openJedzenie(); return; }
+  if(D.exadd){ const n=$('#exN').value.trim(), k=+$('#exK').value||0, bb=+$('#exB').value||0;
+    if(!n || !k){ toast('Wpisz nazwę i kalorie'); return; }
+    dziennik(dayKey(dayIdx))[D.exadd].extra.push({n, k, b:bb}); save(); renderPlan(); openJedzenie(); return; }
+  if(D.exrm){ const [w,i] = D.exrm.split('~');
+    dziennik(dayKey(dayIdx))[w].extra.splice(+i,1); save(); renderPlan(); openJedzenie(); return; }
   if(D.auto){ openAuto(); return; }
   if(D.optb){ autoOpt.batch = !autoOpt.batch; openAuto(); return; }
   if(D.optq){ autoOpt.quick = !autoOpt.quick; openAuto(); return; }
@@ -1590,14 +1763,20 @@ function readEditor(){
   document.querySelectorAll('[data-ip]').forEach(s=>{ edIng[+s.dataset.ip][0] = s.value; });
   document.querySelectorAll('[data-iq]').forEach(s=>{ edIng[+s.dataset.iq][1] = +s.value||0; });
   document.querySelectorAll('[data-st]').forEach(s=>{ edSteps[+s.dataset.st] = s.value; });
-  const n=$('#eN'); if(n) edSteps._n = n.value;
+  /* zapamiętujemy też górną część formularza — bez tego wpisana nazwa
+     znikała przy dodaniu kolejnego składnika (formularz rysuje się od nowa) */
+  if($('#eN')) edMeta = {
+    n: $('#eN').value, em: $('#eE').value || '🍽️',
+    t: +$('#eT').value || 20, typ: $('#eTyp').value,
+    pieces: $('#eP').value
+  };
 }
 function saveRecipe(){
   readEditor();
   const n = $('#eN').value.trim();
   if(!n){ toast('Wpisz nazwę przepisu'); return; }
   const rec = {
-    id: 'c'+Date.now(), custom:true, n,
+    id: edId || ('c'+Date.now()), custom:true, n,
     em: $('#eE').value.trim()||'🍽️',
     t: +$('#eT').value||20,
     typ: [$('#eTyp').value],
@@ -1607,8 +1786,10 @@ function saveRecipe(){
   };
   if(!rec.ing.length){ toast('Dodaj choć jeden składnik'); return; }
   if(!rec.steps.length) rec.steps = ['—'];
-  CUSTOM.push(rec); DB.set('myrec', CUSTOM); save();
-  closeSheet(); go('rec'); toast('Przepis zapisany ✓');
+  const i = CUSTOM.findIndex(r=>r.id===rec.id);
+  if(i>=0) CUSTOM[i] = rec; else CUSTOM.push(rec);
+  DB.set('myrec', CUSTOM); save();
+  closeSheet(); go('rec'); toast(i>=0 ? 'Zmiany zapisane ✓' : 'Przepis zapisany ✓');
 }
 function saveProduct(){
   const n = $('#pN').value.trim(); if(!n){ toast('Wpisz nazwę'); return; }
