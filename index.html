@@ -371,7 +371,7 @@ const SLOTS = [['sniadanie','Śniadanie'],['obiad','Obiad'],['kolacja','Kolacja'
 const DEF_SET = {
   himName:'On', herName:'Ona', himKcal:2400, herKcal:1600, himProt:170, herProt:120,
   himSex:'M', herSex:'K', himAge:30, herAge:28, himH:180, herH:165,
-  himPal:1.375, herPal:1.375, himDef:500, herDef:400, trainBoost:10, lastAsk:'',
+  himPal:1.375, herPal:1.375, himDef:500, herDef:400, trainBoost:10, lastAsk:'', mailTo:'jakubdziuba03@gmail.com',
   days:3, containerMl:750, pairCode:''
 };
 let S = Object.assign({}, DEF_SET, DB.get('set', {}));
@@ -461,6 +461,8 @@ function fmtQ(pid, q){
 }
 /* własne przepisy i produkty dopisane przez Was */
 let CUSTOM = DB.get('myrec', []);
+let RECDEL = DB.get('recdel', []);
+let MSGDEL = DB.get('msgdel', []);
 let MYP    = DB.get('myprod', {});
 Object.assign(P, MYP);
 const ALL = () => R.concat(CUSTOM);
@@ -1071,8 +1073,10 @@ function openMsgs(){
       d.push(`<div class="item"><div class="txt"><b style="font-weight:500;font-size:14px">${esc(m.t)}</b>
         <div class="tiny">${m.d}</div></div><button class="icobtn" data-msgdel="${i}" style="width:30px;height:30px;font-size:12px">✕</button></div>`);
     });
-    d.push('</div><button class="btn wide" data-msgsend="1">📤 Wyślij wszystko</button>');
-    d.push('<p class="tiny" style="margin-top:8px">Na razie wysyła się to zwykłą wiadomością (SMS, WhatsApp, mail). Po podłączeniu chmury wiadomości będą trafiać do mnie same.</p>');
+    d.push('</div>');
+    d.push('<button class="btn wide" data-msgmail="1">✉️ Wyślij do Claude\'a</button>');
+    d.push('<button class="btn ghost wide" data-msgsend="1" style="margin-top:8px">📤 Wyślij inaczej (SMS / WhatsApp)</button>');
+    d.push('<p class="tiny" style="margin-top:9px">Wiadomości widzicie oboje — synchronizują się między telefonami. Przycisk wyżej otwiera pocztę z gotowym mailem na '+esc(S.mailTo)+'; wystarczy nacisnąć wyślij. Claude czyta tę skrzynkę, więc uwagi do niego docierają.</p>');
   }
   openSheet(d.join(''));
 }
@@ -1133,6 +1137,7 @@ function openSettings(){
   d.push('<h2>Planowanie</h2><div class="card"><div class="grid2">');
   d.push(`<label class="f"><span>Ile dni planujecie</span><input id="sD" type="number" min="1" max="7" inputmode="numeric" value="${S.days}"></label>`);
   d.push(`<label class="f"><span>Pojemnik (ml)</span><input id="sC" type="number" inputmode="numeric" value="${S.containerMl}"></label>`);
+  d.push(`<label class="f" style="grid-column:1/-1"><span>Adres do wysyłki uwag (💬)</span><input id="sM" type="email" value="${esc(S.mailTo)}"></label>`);
   d.push('</div></div>');
   d.push('<button class="btn ghost wide" data-cele="1" style="margin-bottom:8px">🎯 Policz cele z wagi, wzrostu i aktywności</button>');
   d.push('<button class="btn wide" data-ssave="1">Zapisz</button>');
@@ -1174,11 +1179,32 @@ function urlFromKey(key){
 
 const DOCS = {
   plan:   {get:()=>PLAN,          set:v=>{ PLAN=v;   DB.set('plan',PLAN); }},
-  rec:    {get:()=>CUSTOM,        set:v=>{ CUSTOM=v; DB.set('myrec',CUSTOM); }},
-  prod:   {get:()=>MYP,           set:v=>{ MYP=v; Object.assign(P,MYP); DB.set('myprod',MYP); }},
+  /* przepisy: łączymy oba telefony po id, a skasowane pamiętamy osobno,
+     żeby dwie osoby mogły dodawać dania równocześnie i nic nie ginęło */
+  rec:    {get:()=>({list:CUSTOM, del:RECDEL}),
+           set:v=>{
+             const zdalne = Array.isArray(v) ? v : ((v&&v.list)||[]);
+             const skas   = Array.isArray(v) ? [] : ((v&&v.del)||[]);
+             RECDEL = [...new Set(RECDEL.concat(skas))];
+             const po = {};
+             CUSTOM.concat(zdalne).forEach(r=>{ if(r && r.id && !po[r.id]) po[r.id] = r; });
+             CUSTOM = Object.values(po).filter(r=>RECDEL.indexOf(r.id) < 0);
+             DB.set('myrec',CUSTOM); DB.set('recdel',RECDEL);
+           }},
+  prod:   {get:()=>MYP,
+           set:v=>{ MYP = Object.assign({}, v||{}, MYP); Object.assign(P,MYP); DB.set('myprod',MYP); }},
   weight: {get:()=>WEIGHT,        set:v=>{ WEIGHT=v; DB.set('weight',WEIGHT); }},
   train:  {get:()=>TRAIN,         set:v=>{ TRAIN=v;  DB.set('train',TRAIN); }},
-  msgs:   {get:()=>MSGS,          set:v=>{ MSGS=v;  DB.set('msgs',MSGS); }},
+  msgs:   {get:()=>({list:MSGS, del:MSGDEL}),
+           set:v=>{
+             const zdalne = Array.isArray(v) ? v : ((v&&v.list)||[]);
+             const skas   = Array.isArray(v) ? [] : ((v&&v.del)||[]);
+             MSGDEL = [...new Set(MSGDEL.concat(skas))];
+             const widziane = {}, all = zdalne.concat(MSGS);
+             MSGS = all.filter(m=>{ const k = m.d+'|'+m.t;
+               if(widziane[k] || MSGDEL.indexOf(k) >= 0) return false; widziane[k]=1; return true; });
+             DB.set('msgs',MSGS); DB.set('msgdel',MSGDEL);
+           }},
   set:    {get:()=>{ const c=Object.assign({},S); delete c.pairCode; return c; },
            set:v=>{ S=Object.assign({},DEF_SET,v,{pairCode:S.pairCode}); DB.set('set',S); }},
   /* lista zakupów scala się po pojedynczych produktach, żeby dwa równoczesne
@@ -1412,7 +1438,7 @@ if('serviceWorker' in navigator && location.protocol.indexOf('http')===0){
 }
 
 go('plan'); toast('Wybierz miejsce w planie i dotknij „wybierz danie”'); return; }
-  if(D.delrec){ CUSTOM = CUSTOM.filter(r=>r.id!==D.delrec); DB.set('myrec',CUSTOM); closeSheet(); renderRec(); return; }
+  if(D.delrec){ CUSTOM = CUSTOM.filter(r=>r.id!==D.delrec); RECDEL.push(D.delrec); DB.set('myrec',CUSTOM); DB.set('recdel',RECDEL); save(); closeSheet(); renderRec(); return; }
 
   if(D.iadd){ readEditor(); edIng.push(['jajko',1]); drawEditor(); return; }
   if(D.irm){ readEditor(); edIng.splice(+D.irm,1); drawEditor(); return; }
@@ -1496,8 +1522,17 @@ go('plan'); toast('Wybierz miejsce w planie i dotknij „wybierz danie”'); ret
   if(D.autorun){ const r = generatePlan(S.days); closeSheet(); dayIdx=0; renderPlan();
     toast(`Gotowe: średnio ${r.k} kcal i ${r.b} g białka dziennie na Was dwoje`); return; }
   if(D.msgadd){ const t=$('#msgT').value.trim(); if(!t){ toast('Napisz coś najpierw'); return; }
-    MSGS.push({t, d: iso(new Date()).split('-').reverse().join('.')}); DB.set('msgs',MSGS); openMsgs(); toast('Zapisane ✓'); return; }
-  if(D.msgdel){ MSGS.splice(+D.msgdel,1); DB.set('msgs',MSGS); openMsgs(); return; }
+    MSGS.push({t, d: iso(new Date()).split('-').reverse().join('.')}); DB.set('msgs',MSGS); save(); openMsgs(); toast('Zapisane ✓'); return; }
+  if(D.msgdel){ const m=MSGS[+D.msgdel]; if(m) MSGDEL.push(m.d+'|'+m.t); MSGS.splice(+D.msgdel,1); DB.set('msgs',MSGS); DB.set('msgdel',MSGDEL); save(); openMsgs(); return; }
+  if(D.msgmail){
+    const txt = MSGS.map((m,i)=>(i+1)+'. '+m.t+'  ('+m.d+')').join('\n');
+    const tresc = 'Uwagi i pomysły do apki Nasza Kuchnia:\n\n' + txt +
+      '\n\n(wysłane z apki, ' + iso(new Date()) + ')';
+    location.href = 'mailto:' + encodeURIComponent(S.mailTo) +
+      '?subject=' + encodeURIComponent('KUCHNIA — uwagi z apki') +
+      '&body=' + encodeURIComponent(tresc);
+    return;
+  }
   if(D.msgsend){ const txt = 'Uwagi do apki Nasza Kuchnia:\n\n' + MSGS.map((m,i)=>(i+1)+'. '+m.t).join('\n\n');
     if(navigator.share) navigator.share({text:txt}).catch(()=>{});
     else if(navigator.clipboard){ navigator.clipboard.writeText(txt); toast('Skopiowane ✓'); }
@@ -1531,7 +1566,7 @@ function saveRecipe(){
   };
   if(!rec.ing.length){ toast('Dodaj choć jeden składnik'); return; }
   if(!rec.steps.length) rec.steps = ['—'];
-  CUSTOM.push(rec); DB.set('myrec', CUSTOM);
+  CUSTOM.push(rec); DB.set('myrec', CUSTOM); save();
   closeSheet(); go('rec'); toast('Przepis zapisany ✓');
 }
 function saveProduct(){
@@ -1539,7 +1574,7 @@ function saveProduct(){
   const id = 'p'+Date.now();
   MYP[id] = {n, a:$('#pA').value, u:$('#pU').value, kcal:+$('#pK').value||0,
              pack:+$('#pP').value||null, gram:+$('#pG').value||null};
-  P[id] = MYP[id]; DB.set('myprod', MYP);
+  P[id] = MYP[id]; DB.set('myprod', MYP); save();
   edIng.push([id, 100]);
   drawEditor(); toast('Produkt dodany ✓');
 }
@@ -1552,6 +1587,7 @@ function saveSettings(){
   S.herProt = +$('#sRB').value||120;
   S.days    = Math.min(7, Math.max(1, +$('#sD').value||3));
   S.containerMl = +$('#sC').value||750;
+  S.mailTo = $('#sM').value.trim() || S.mailTo;
   if(dayIdx >= S.days) dayIdx = 0;
   save(); closeSheet(); renderAll(); toast('Zapisane ✓');
 }
