@@ -1116,7 +1116,7 @@ function openCele(){
   });
 
   d.push(`<div class="card tight"><label class="f" style="margin:0"><span>Dopałka w dni treningowe (%)</span><input id="cBoost" type="number" inputmode="numeric" value="${S.trainBoost}"></label></div>`);
-  d.push('<button class="btn wide" data-celeSave="1">Przelicz i zapisz cele</button>');
+  d.push('<button class="btn wide" data-celesave="1">Przelicz i zapisz cele</button>');
   d.push('<p class="tiny" style="margin-top:9px">Cele trafią do ustawień i od razu zaczną obowiązywać w planie. Możesz je potem ręcznie poprawić.</p>');
   openSheet(d.join(''));
 }
@@ -1410,7 +1410,12 @@ async function checkDevices(){
    OBSŁUGA KLIKNIĘĆ
    ========================================================================== */
 document.addEventListener('click', e => {
-  const el = e.target.closest('[data-day],[data-tog],[data-open],[data-mul],[data-del],[data-pick],[data-go],[data-buy],[data-clear],[data-share],[data-new],[data-fr],[data-wsave],[data-demo],[data-close],[data-setmul],[data-plate],[data-savemul],[data-addplan],[data-delrec],[data-set],[data-iadd],[data-irm],[data-padd],[data-sadd],[data-esave],[data-psave],[data-ssave],[data-reset],[data-msgadd],[data-msgdel],[data-msgsend],[data-auto],[data-autorun],[data-optb],[data-optq],[data-obniz],[data-czekaj],[data-tr],[data-cele],[data-celeSave],[data-syncon],[data-synckey],[data-syncoff],[data-synccopy],[data-syncpaste],[data-syncnow]');
+  /* Szukamy najbliższego elementu z jakimkolwiek atrybutem data-*.
+     Wcześniej była tu ręcznie pisana lista selektorów i dwa razy zdarzyło się,
+     że nowy przycisk nie został do niej dopisany — czyli nie działał w ciszy. */
+  let el = e.target;
+  while(el && el !== document.body && !(el.dataset && Object.keys(el.dataset).length)) el = el.parentElement;
+  if(!el || el === document.body || !el.dataset) return;
   if(!el) return;
   const D = el.dataset;
 
@@ -1526,11 +1531,18 @@ go('plan'); toast('Wybierz miejsce w planie i dotknij „wybierz danie”'); ret
   if(D.msgdel){ const m=MSGS[+D.msgdel]; if(m) MSGDEL.push(m.d+'|'+m.t); MSGS.splice(+D.msgdel,1); DB.set('msgs',MSGS); DB.set('msgdel',MSGDEL); save(); openMsgs(); return; }
   if(D.msgmail){
     const txt = MSGS.map((m,i)=>(i+1)+'. '+m.t+'  ('+m.d+')').join('\n');
-    const tresc = 'Uwagi i pomysły do apki Nasza Kuchnia:\n\n' + txt +
+    let tresc = 'Uwagi i pomysły do apki Nasza Kuchnia:\n\n' + txt +
       '\n\n(wysłane z apki, ' + iso(new Date()) + ')';
-    location.href = 'mailto:' + encodeURIComponent(S.mailTo) +
+    if(tresc.length > 1500) tresc = tresc.slice(0,1500) + '\n… (reszta w apce)';
+    /* zapasowo do schowka — gdyby poczta się nie otworzyła, treść nie ginie */
+    try{ if(navigator.clipboard) navigator.clipboard.writeText(tresc); }catch(e){}
+    const link = 'mailto:' + S.mailTo +
       '?subject=' + encodeURIComponent('KUCHNIA — uwagi z apki') +
       '&body=' + encodeURIComponent(tresc);
+    const a = document.createElement('a');
+    a.href = link; a.style.display = 'none';
+    document.body.appendChild(a); a.click();
+    setTimeout(()=>{ a.remove(); toast('Otwieram pocztę. Treść jest też w schowku.'); }, 300);
     return;
   }
   if(D.msgsend){ const txt = 'Uwagi do apki Nasza Kuchnia:\n\n' + MSGS.map((m,i)=>(i+1)+'. '+m.t).join('\n\n');
